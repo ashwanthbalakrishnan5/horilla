@@ -102,6 +102,17 @@ urlpatterns = [
     path("restrict-update/<int:id>", views.restrict_update, name="restrict-update"),
     path("restrict-delete/<int:id>", views.restrict_delete, name="restrict-delete"),
     path(
+        "restrict-days-bulk-delete",
+        views.restrict_days_bulk_delete,
+        name="restrict-days-bulk-delete",
+    ),
+    path(
+        "restrict-day-select-filter",
+        views.restrict_day_select_filter,
+        name="restrict-day-select-filter",
+    ),
+    path("restrict-day-select", views.restrict_day_select, name="restrict-day-select"),
+    path(
         "holidays-excel-template",
         views.holidays_excel_template,
         name="holidays-excel-template",
@@ -352,5 +363,70 @@ urlpatterns = [
     ),
     path(
         "view-clashes/<int:leave_request_id>/", views.view_clashes, name="view-clashes"
+    ),
+    path(
+        "compensatory-leave-settings-view",
+        views.compensatory_leave_settings_view,
+        name="compensatory-leave-settings-view",
+    ),
+    path(
+        "enable-compensatory-leave",
+        views.enable_compensatory_leave,
+        name="enable-compensatory-leave",
+    ),
+    path(
+        "get-leave-attendance-dates",
+        views.get_leave_attendance_dates,
+        name="get-leave-attendance-dates",
+    ),
+    path(
+        "view-compensatory-leave",
+        views.view_compensatory_leave,
+        name="view-compensatory-leave",
+    ),
+    path(
+        "filter-compensatory-leave",
+        views.filter_compensatory_leave,
+        name="filter-compensatory-leave",
+    ),
+    path(
+        "create-compensatory-leave",
+        views.create_compensatory_leave,
+        name="create-compensatory-leave",
+    ),
+    path(
+        "update-compensatory-leave/<int:comp_id>",
+        views.create_compensatory_leave,
+        name="update-compensatory-leave",
+    ),
+    path(
+        "delete-compensatory-leave/<int:comp_id>",
+        views.delete_compensatory_leave,
+        name="delete-compensatory-leave",
+    ),
+    path(
+        "approve-compensatory-leave/<int:comp_id>",
+        views.approve_compensatory_leave,
+        name="approve-compensatory-leave",
+    ),
+    path(
+        "reject-compensatory-leave/<int:comp_id>",
+        views.reject_compensatory_leave,
+        name="reject-compensatory-leave",
+    ),
+    path(
+        "compensatory-leave-individual-view/<int:comp_leave_id>",
+        views.compensatory_leave_individual_view,
+        name="compensatory-leave-individual-view",
+    ),
+    path(
+        "view-compensatory-leave-comment/<int:comp_leave_id>",
+        views.view_compensatory_leave_comment,
+        name="view-compensatory-leave-comment",
+    ),
+    path(
+        "create-compensatory-leave-comment/<int:comp_leave_id>/",
+        views.create_compensatory_leave_comment,
+        name="create-compensatory-leave-comment",
     ),
 ]

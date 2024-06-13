@@ -25,7 +25,11 @@ from . import settings
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("accounts/", include("django.contrib.auth.urls")),
+    path("accounts/", include("django.contrib.auth.urls")),
     path("", include("base.urls")),
+    path("", include("horilla_automations.urls")),
+    path("", include("horilla_views.urls")),
     path("recruitment/", include("recruitment.urls")),
     path("employee/", include("employee.urls")),
     path("leave/", include("leave.urls")),

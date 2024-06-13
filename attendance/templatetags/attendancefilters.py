@@ -6,6 +6,7 @@ This module is used to write custom template filters.
 """
 
 import base64
+from datetime import date, datetime, timedelta
 from itertools import groupby
 
 from django import template
@@ -15,6 +16,8 @@ from django.template.defaultfilters import register
 
 from attendance.models import AttendanceValidationCondition
 from attendance.views.views import strtime_seconds
+from base.models import EmployeeShiftSchedule
+from base.thread_local_middleware import _thread_locals
 
 register = template.Library()
 
@@ -219,3 +222,22 @@ def base64_encode(value):
         return base64.b64encode(value).decode("utf-8")
     except:
         pass
+
+
+@register.filter(name="current_month_record")
+def current_month_record(queryset):
+    current_month_start_date = datetime.now().replace(day=1)
+    next_month_start_date = current_month_start_date + timedelta(days=31)
+
+    return queryset.filter(
+        start_datetime__gte=current_month_start_date,
+        start_datetime__lt=next_month_start_date,
+    ).order_by("start_datetime")
+
+
+@register.filter
+def get_item(list, i):
+    try:
+        return list[i]
+    except:
+        return None

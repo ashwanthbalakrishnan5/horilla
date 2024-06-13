@@ -237,7 +237,7 @@
                                                                 <span class="count-span">{{ objective.employee_objective.all|length}} {% trans "Assignees" %}</span>
                                                             </div>
                                                             <div data-cell-index="4" class="oh-sticky-table__td ">
-                                                                {{objective.duration}}
+                                                                {{objective.duration}} {{objective.get_duration_unit_display}}
                                                             </div>
                                                             <div data-cell-index="5" class="oh-sticky-table__td">
                                                                 {{objective.description}}
@@ -255,7 +255,9 @@
                                                                     {% if perms.pms.change_objective %}
                                                                         <a
                                                                             onclick="event.preventDefault();event.stopPropagation()"
-                                                                            hx-get="{% url 'objective-update' objective.id %}" hx-target='#objectDetailsModalTarget' hx-swap='innerHTML' data-toggle='oh-modal-toggle' data-target='#objectDetailsModal'  class="oh-btn oh-btn--light-bkg w-100" title="Edit"
+                                                                            data-toggle='oh-modal-toggle' data-target='#objectCreateModal'
+                                                                            hx-get="{% url 'objective-update' objective.id %}" hx-target='#objectCreateModalTarget'
+                                                                            class="oh-btn oh-btn--light-bkg w-100" title="{% trans 'Edit' %}"
                                                                         ><ion-icon name="create-outline"></ion-icon></a>
                                                                     {% endif %}
                                                                         {% comment %} <a hx-get="" hx-target='#duplicateFormContainer' hx-swap='innerHTML' data-toggle='oh-modal-toggle' data-target='#duplicateRecruitmentModal'  class="oh-btn oh-btn--light-bkg w-100" title="{% trans 'Duplicate' %}"><ion-icon name="copy-outline"></ion-icon></a> {% endcomment %}
@@ -617,14 +619,25 @@
 </div>
 <!-- end of tabs -->
 <script>
-    $(document).ready(function() {
-        $(".oh-permission-table--toggle").on("click", function(){
-            $(this).siblings(".oh-sticky-table__td").children(".count-span").toggleClass("d-none")
-        })
-        activeTab = $(".oh-tabs__tab.oh-tabs__tab--active");
-        if (!activeTab.length) {
-            $('[data-target="#self_objective"]').click()
+
+    $(document).ready(function () {
+        var activeTab = localStorage.getItem("activeTabokr");
+        if (activeTab != null) {
+          var tab = $(`[data-target="${activeTab}"]`);
+          var tabContent = $(activeTab);
+          $(tab).attr("class", "oh-tabs__tab oh-tabs__tab--active");
+          $(tabContent).attr("class", "oh-tabs__content oh-tabs__content--active");
+        } else {
+          $('[data-target="#all_objective"]').attr(
+            "class",
+            "oh-tabs__tab oh-tabs__tab--active"
+          );
+          $("#all_objective").attr("class", "oh-tabs__content oh-tabs__content--active");
         }
+        $(".oh-tabs__tab").click(function (e) {
+          var activeTab = $(this).attr("data-target");
+          localStorage.setItem("activeTabokr", activeTab);
+        });
     });
 
     toggleColumns("all_objective-table", "allObjectiveCells");

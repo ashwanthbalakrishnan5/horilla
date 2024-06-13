@@ -156,6 +156,9 @@ class Employee(models.Model):
         """
         return getattr(getattr(self, "employee_work_info", None), "email", self.email)
 
+    def get_email(self):
+        return self.get_mail()
+
     def get_work_type(self):
         """
         This method is used to return the work type of the employee
@@ -366,7 +369,7 @@ class Employee(models.Model):
         Recruitment model
         """
 
-        unique_together = ("employee_first_name", "employee_last_name")
+        unique_together = ("employee_first_name", "employee_last_name", "email")
         permissions = (
             ("change_ownprofile", "Update own profile"),
             ("view_ownprofile", "View Own Profile"),
@@ -433,6 +436,9 @@ class Employee(models.Model):
             view_ownprofile = Permission.objects.get(codename="view_ownprofile")
             user.user_permissions.add(view_ownprofile)
             user.user_permissions.add(change_ownprofile)
+
+        if not hasattr(self, "employee_work_info"):
+            EmployeeWorkInformation.objects.get_or_create(employee_id=self)
             return self.save()
 
         return self
@@ -646,6 +652,7 @@ class EmployeeBankDetails(HorillaModel):
 
 class NoteFiles(HorillaModel):
     files = models.FileField(upload_to="employee/NoteFiles", blank=True, null=True)
+    objects = models.Manager()
 
     def __str__(self):
         return self.files.name.split("/")[-1]
@@ -823,4 +830,5 @@ class EmployeeGeneralSetting(HorillaModel):
     """
 
     badge_id_prefix = models.CharField(max_length=5, default="PEP")
+    objects = models.Manager()
     company_id = models.ForeignKey(Company, null=True, on_delete=models.CASCADE)

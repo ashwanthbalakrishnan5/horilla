@@ -38,7 +38,7 @@
                 hx-get="{% url 'faq-search' %}?category=true"
                 hx-trigger="change delay:300ms"
                 onkeyup='$("#suggestion_box").show(); if ($(this).val() == "") {$("#suggestion_box").hide()}'
-				onfocusout = '$("#suggestion_box").hide()'
+				onfocusout = '$("#suggestion_box").fadeOut(500)'
                 hx-target="#faqCategoryList"
             />
             <div class="oh-autocomplete-suggestions" id="suggestion_box"></div>
@@ -74,9 +74,9 @@
                     <button
                         class="oh-btn oh-btn--secondary oh-btn--shadow"
                         data-toggle="oh-modal-toggle"
-                        data-target="#faqCategoryCreate"
+                        data-target="#objectCreateModal"
                         hx-get="{% url 'faq-category-create' %}"
-                        hx-target="#faqCategoryCreate"
+                        hx-target="#objectCreateModalTarget"
                     >
                         <ion-icon name="add-outline" class="me-1"></ion-icon>
                         {% trans "Create" %}

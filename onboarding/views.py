@@ -463,6 +463,7 @@ def candidate_delete(request, obj_id):
 
 
 @login_required
+@hx_request_required
 @all_manager_can_enter("onboarding.view_candidatestage")
 def candidates_single_view(request, id, **kwargs):
     """
@@ -587,6 +588,7 @@ def hired_candidate_view(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("candidate.view_candidate")
 def candidate_filter(request):
     """
@@ -652,9 +654,6 @@ def email_send(request):
         ).values_list("body", flat=True)
     )
 
-    if not candidates:
-        messages.info(request, "Please choose candidates")
-
     attachments_other = []
     for file in other_attachments:
         attachments_other.append((file.name, file.read(), file.content_type))
@@ -662,6 +661,11 @@ def email_send(request):
     for cand_id in candidates:
         attachments = list(set(attachments_other) | set([]))
         candidate = Candidate.objects.get(id=cand_id)
+        if candidate.converted_employee_id:
+            messages.info(
+                request, _(f"{candidate} has already been converted to employee.")
+            )
+            continue
         for html in bodys:
             # due to not having solid template we first need to pass the context
             template_bdy = template.Template(html)
@@ -1570,6 +1574,7 @@ def stage_name_update(request, stage_id):
 
 
 @login_required
+@hx_request_required
 @stage_manager_can_enter("recruitment.change_candidate")
 def onboarding_send_mail(request, candidate_id):
     """
@@ -1616,6 +1621,7 @@ def update_probation_end(request):
 
 
 @login_required
+@hx_request_required
 @all_manager_can_enter("onboarding.change_onboardingtask")
 def task_report(request):
     """
@@ -1697,6 +1703,7 @@ def update_offer_letter_status(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("recruitment.add_rejectedcandidate")
 def add_to_rejected_candidates(request):
     """

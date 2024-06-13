@@ -4,17 +4,6 @@
     table {
         width: 100%;
     }
-    /* #workRecordTable thead {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-    }
-
-    #workRecordTable th {
-        position: sticky;
-        top: 0;
-        z-index: 2;
-    } */
     th,
     td {
         border: 1px solid hsl(213,22%,84%);
@@ -22,9 +11,15 @@
     }
 
     th {
-        background-color: lightgray !important;
+        background-color: lightgray;
     }
-
+    .header {
+        background:lightgray;
+    }
+    .holiday {
+        background:#e3e3e8;
+        border:none
+    }
     .oh-card {
         background-color: #ededed;
         border-radius: 5px;
@@ -55,11 +50,10 @@
             <div>
                 <h4>{% trans "Work Records" %}</h4>
             </div>
-
-            <div class="me-3">
+            <div class="me-3" >
                 <h6 class="mb-2 fw-bold">{% trans "Date:" %} {{ current_date }}</h6>
                 <h6>
-                    <div style = "cursor: pointer;">
+                    <div style = "cursor: pointer;display:flex;align-items:center">
                         <label for="monthYearField" class="text-danger fw-bold" style = "cursor: pointer;">{% trans "Month" %}</label>
                         <input class="oh-select p-2 w-75 m-1"
                         type="month"
@@ -73,8 +67,8 @@
                 </h6>
             </div>
         </div>
-        <div id="workRecordTable">
-            {% include "attendance/work_record/work_record_list.html" %}
+        <div id="workRecordTable" hx-get="{% url 'work-records-change-month' %}?month={{pd}}&{{ current_date|date:"Y-m" }}" hx-trigger="load">
+            <div class="animated-background"></div>
         </div>
     </div>
 </div>

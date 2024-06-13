@@ -29,7 +29,12 @@ from base.methods import (
 )
 from base.models import Company
 from employee.models import Employee, EmployeeWorkInformation
-from horilla.decorators import login_required, owner_can_enter, permission_required
+from horilla.decorators import (
+    hx_request_required,
+    login_required,
+    owner_can_enter,
+    permission_required,
+)
 from notifications.signals import notify
 from payroll.context_processors import get_active_employees
 from payroll.filters import ContractFilter, ContractReGroup, PayslipFilter
@@ -120,6 +125,7 @@ def contract_update(request, contract_id, **kwargs):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.change_contract")
 def contract_status_update(request, contract_id):
     from payroll.forms.forms import ContractForm
@@ -174,6 +180,42 @@ def contract_status_update(request, contract_id):
 
 @login_required
 @permission_required("payroll.change_contract")
+def bulk_contract_status_update(request):
+    status = request.POST.get("status")
+    ids = eval(request.POST.get("ids"))
+    all_contracts = Contract.objects.all()
+    contracts = all_contracts.filter(id__in=ids)
+
+    for contract in contracts:
+        save = True
+        if status in ["active", "draft"]:
+            active_contract = all_contracts.filter(
+                contract_status="active", employee_id=contract.employee_id
+            ).exists()
+            draft_contract = all_contracts.filter(
+                contract_status="draft", employee_id=contract.employee_id
+            ).exists()
+            if (status == "active" and active_contract) or (
+                status == "draft" and draft_contract
+            ):
+                save = False
+                messages.info(
+                    request,
+                    _("An {} contract already exists for {}").format(
+                        status, contract.employee_id
+                    ),
+                )
+        if save:
+            contract.contract_status = status
+            contract.save()
+            messages.success(
+                request, _("The contract status has been updated successfully.")
+            )
+    return HttpResponse("success")
+
+
+@login_required
+@permission_required("payroll.change_contract")
 def update_contract_filing_status(request, contract_id):
     if request.method == "POST":
         contract = get_object_or_404(Contract, id=contract_id)
@@ -197,6 +239,7 @@ def update_contract_filing_status(request, contract_id):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.delete_contract")
 def contract_delete(request, contract_id):
     """
@@ -256,6 +299,7 @@ def contract_view(request):
 
 
 @login_required
+@hx_request_required
 @owner_can_enter("payroll.view_contract", Contract)
 def view_single_contract(request, contract_id):
     """
@@ -299,6 +343,7 @@ def view_single_contract(request, contract_id):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.view_contract")
 def contract_filter(request):
     """
@@ -569,6 +614,8 @@ def delete_payslip(request, payslip_id):
         messages.error(request, _("Payslip not found."))
     except ProtectedError:
         messages.error(request, _("Something went wrong"))
+    if not Payslip.objects.filter():
+        return HttpResponse("<script>window.location.reload()</script>")
     return redirect(filter_payslip)
 
 
@@ -1329,6 +1376,31 @@ def contract_bulk_delete(request):
     return JsonResponse({"message": "Success"})
 
 
+def equalize_lists_length(allowances, deductions):
+    """
+    Equalize the lengths of two lists by appending empty dictionaries to the shorter list.
+
+    Args:
+    deductions (list): List of dictionaries representing deductions.
+    allowances (list): List of dictionaries representing allowances.
+
+    Returns:
+    tuple: Tuple containing two lists with equal lengths.
+    """
+    num_deductions = len(deductions)
+    num_allowances = len(allowances)
+
+    while num_deductions < num_allowances:
+        deductions.append({"title": "", "amount": ""})
+        num_deductions += 1
+
+    while num_allowances < num_deductions:
+        allowances.append({"title": "", "amount": ""})
+        num_allowances += 1
+
+    return deductions, allowances
+
+
 def payslip_pdf(request, id):
     payslip = Payslip.objects.get(id=id)
     if (
@@ -1396,8 +1468,24 @@ def payslip_pdf(request, id):
         data["json_data"]["payslip"] = payslip.id
         data["instance"] = payslip
         data["currency"] = PayrollSettings.objects.first().currency_symbol
+        data["all_deductions"] = []
+        for deduction_list in [
+            data["basic_pay_deductions"],
+            data["gross_pay_deductions"],
+            data["pretax_deductions"],
+            data["post_tax_deductions"],
+            data["tax_deductions"],
+            data["net_deductions"],
+        ]:
+            data["all_deductions"].extend(deduction_list)
 
-    return generate_pdf("payroll/payslip/individual_pdf.html", context=data)
+        data["all_allowances"] = data["allowances"].copy()
+        equalize_lists_length(data["allowances"], data["all_deductions"])
+        data["zipped_data"] = zip(data["allowances"], data["all_deductions"])
+        data["host"] = request.get_host()
+        data["protocol"] = "https" if request.is_secure() else "http"
+
+    return generate_pdf("payroll/payslip/individual_pdf.html", context=data, html=False)
 
 
 @login_required
@@ -1586,6 +1674,7 @@ def create_payrollrequest_comment(request, payroll_id):
 
 
 @login_required
+@hx_request_required
 def view_payrollrequest_comment(request, payroll_id):
     """
     This method is used to show Reimbursement request comments
@@ -1625,8 +1714,10 @@ def delete_payrollrequest_comment(request, comment_id):
     """
     This method is used to delete Reimbursement request comments
     """
-    comment = ReimbursementrequestComment.objects.get(id=comment_id)
-    reimbursementrequest = comment.request_id.id
+    comment = ReimbursementrequestComment.objects.filter(id=comment_id)
+    if not request.user.has_perm("delete_reimbursementrequestcomment"):
+        comment = comment.filter(employee_id__employee_user_id=request.user)
+    reimbursementrequest = comment.first().request_id.id
     comment.delete()
 
     messages.success(request, _("Comment deleted successfully!"))
@@ -1639,7 +1730,12 @@ def delete_reimbursement_comment_file(request):
     Used to delete attachment
     """
     ids = request.GET.getlist("ids")
-    ReimbursementFile.objects.filter(id__in=ids).delete()
+    records = ReimbursementFile.objects.filter(id__in=ids)
+    if not request.user.has_perm("payroll.delete_reimbursmentfile"):
+        records = records.filter(employee_id__employee_user_id=request.user)
+
+    records.delete()
+
     payroll_id = request.GET["payroll_id"]
     comments = ReimbursementrequestComment.objects.filter(
         request_id=payroll_id

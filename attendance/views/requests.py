@@ -10,12 +10,17 @@ from datetime import date, datetime
 from urllib.parse import parse_qs
 
 from django.contrib import messages
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
+from django.template.loader import render_to_string
 from django.utils.translation import gettext_lazy as _
 
 from attendance.filters import AttendanceFilters, AttendanceRequestReGroup
-from attendance.forms import AttendanceRequestForm, NewRequestForm
+from attendance.forms import (
+    AttendanceRequestForm,
+    BulkAttendanceRequestForm,
+    NewRequestForm,
+)
 from attendance.methods.differentiate import get_diff_dict
 from attendance.models import Attendance, AttendanceActivity, AttendanceLateComeEarlyOut
 from attendance.views.clock_in_out import early_out, late_come
@@ -27,9 +32,9 @@ from base.methods import (
     get_key_instances,
     is_reportingmanager,
 )
-from base.models import EmployeeShiftDay
+from base.models import EmployeeShift, EmployeeShiftDay
 from employee.models import Employee
-from horilla.decorators import login_required, manager_can_enter
+from horilla.decorators import hx_request_required, login_required, manager_can_enter
 from notifications.signals import notify
 
 
@@ -124,10 +129,36 @@ def request_attendance_view(request):
 
 
 @login_required
+@hx_request_required
 def request_new(request):
     """
     This method is used to create new attendance requests
     """
+
+    if request.GET.get("bulk") and eval(request.GET.get("bulk")):
+        employee = request.user.employee_get
+        form = BulkAttendanceRequestForm(initial={"employee_id": employee})
+        if request.method == "POST":
+            form = BulkAttendanceRequestForm(request.POST)
+            form.instance.attendance_clock_in_date = request.POST.get("from_date")
+            form.instance.attendance_date = request.POST.get("from_date")
+
+            if form.is_valid():
+                instance = form.save(commit=False)
+                messages.success(request, _("Attendance request created"))
+                return HttpResponse(
+                    render(
+                        request,
+                        "requests/attendance/request_new_form.html",
+                        {"form": form},
+                    ).content.decode("utf-8")
+                    + "<script>location.reload();</script>"
+                )
+        return render(
+            request,
+            "requests/attendance/request_new_form.html",
+            {"form": form, "bulk": True},
+        )
     form = NewRequestForm()
     form = choosesubordinates(request, form, "attendance.change_attendance")
     form.fields["employee_id"].queryset = form.fields[
@@ -161,7 +192,11 @@ def request_new(request):
                 ).content.decode("utf-8")
                 + "<script>location.reload();</script>"
             )
-    return render(request, "requests/attendance/request_new_form.html", {"form": form})
+    return render(
+        request,
+        "requests/attendance/request_new_form.html",
+        {"form": form, "bulk": False},
+    )
 
 
 @login_required
@@ -363,8 +398,12 @@ def approve_validate_attendance_request(request, attendance_id):
     minimum_hour, start_time_sec, end_time_sec = shift_schedule_today(
         day=day, shift=shift
     )
-    late_come(attendance, start_time=start_time_sec, end_time=end_time_sec, shift=shift)
-    early_out(attendance, start_time=start_time_sec, end_time=end_time_sec)
+    if attendance.attendance_clock_in:
+        late_come(
+            attendance, start_time=start_time_sec, end_time=end_time_sec, shift=shift
+        )
+    if attendance.attendance_clock_out:
+        early_out(attendance, start_time=start_time_sec, end_time=end_time_sec)
 
     messages.success(request, _("Attendance request has been approved"))
     employee = attendance.employee_id
@@ -449,6 +488,208 @@ def cancel_attendance_request(request, attendance_id):
 
 
 @login_required
+def select_all_filter_attendance_request(request):
+    page_number = request.GET.get("page")
+    filtered = request.GET.get("filter")
+    filters = json.loads(filtered) if filtered else {}
+
+    if page_number == "all":
+        if request.user.has_perm("attendance.view_attendance"):
+            employee_filter = AttendanceFilters(
+                request.GET,
+                queryset=Attendance.objects.filter(is_validate_request=True),
+            )
+        else:
+            employee_filter = AttendanceFilters(
+                request.GET,
+                queryset=Attendance.objects.filter(
+                    employee_id__employee_user_id=request.user, is_validate_request=True
+                )
+                | Attendance.objects.filter(
+                    employee_id__employee_work_info__reporting_manager_id__employee_user_id=request.user,
+                    is_validate_request=True,
+                ),
+            )
+
+        # Get the filtered queryset
+
+        filtered_employees = employee_filter.qs
+
+        employee_ids = [str(emp.id) for emp in filtered_employees]
+        total_count = filtered_employees.count()
+
+        context = {"employee_ids": employee_ids, "total_count": total_count}
+
+        return JsonResponse(context)
+
+
+@login_required
+@manager_can_enter("attendance.change_attendance")
+def bulk_approve_attendance_request(request):
+    """
+    This method is used to validate the attendance requests
+    """
+    ids = request.POST["ids"]
+    ids = json.loads(ids)
+    for attendance_id in ids:
+        attendance = Attendance.objects.get(id=attendance_id)
+        prev_attendance_date = attendance.attendance_date
+        prev_attendance_clock_in_date = attendance.attendance_clock_in_date
+        prev_attendance_clock_in = attendance.attendance_clock_in
+        attendance.attendance_validated = True
+        attendance.is_validate_request_approved = True
+        attendance.is_validate_request = False
+        attendance.request_description = None
+        attendance.save()
+        if attendance.requested_data is not None:
+            requested_data = json.loads(attendance.requested_data)
+            requested_data["attendance_clock_out"] = (
+                None
+                if requested_data["attendance_clock_out"] == "None"
+                else requested_data["attendance_clock_out"]
+            )
+            requested_data["attendance_clock_out_date"] = (
+                None
+                if requested_data["attendance_clock_out_date"] == "None"
+                else requested_data["attendance_clock_out_date"]
+            )
+            Attendance.objects.filter(id=attendance_id).update(**requested_data)
+            # DUE TO AFFECT THE OVERTIME CALCULATION ON SAVE METHOD, SAVE THE INSTANCE ONCE MORE
+            attendance = Attendance.objects.get(id=attendance_id)
+            attendance.save()
+        if (
+            attendance.attendance_clock_out is None
+            or attendance.attendance_clock_out_date is None
+        ):
+            attendance.attendance_validated = True
+            activity = AttendanceActivity.objects.filter(
+                employee_id=attendance.employee_id,
+                attendance_date=prev_attendance_date,
+                clock_in_date=prev_attendance_clock_in_date,
+                clock_in=prev_attendance_clock_in,
+            )
+            if activity:
+                activity.update(
+                    employee_id=attendance.employee_id,
+                    attendance_date=attendance.attendance_date,
+                    clock_in_date=attendance.attendance_clock_in_date,
+                    clock_in=attendance.attendance_clock_in,
+                )
+
+            else:
+                AttendanceActivity.objects.create(
+                    employee_id=attendance.employee_id,
+                    attendance_date=attendance.attendance_date,
+                    clock_in_date=attendance.attendance_clock_in_date,
+                    clock_in=attendance.attendance_clock_in,
+                )
+
+        # Create late come or early out objects
+        shift = attendance.shift_id
+        day = attendance.attendance_date.strftime("%A").lower()
+        day = EmployeeShiftDay.objects.get(day=day)
+
+        minimum_hour, start_time_sec, end_time_sec = shift_schedule_today(
+            day=day, shift=shift
+        )
+        if attendance.attendance_clock_in:
+            late_come(
+                attendance,
+                start_time=start_time_sec,
+                end_time=end_time_sec,
+                shift=shift,
+            )
+        if attendance.attendance_clock_out:
+            early_out(attendance, start_time=start_time_sec, end_time=end_time_sec)
+
+        messages.success(request, _("Attendance request has been approved"))
+        employee = attendance.employee_id
+        notify.send(
+            request.user,
+            recipient=employee.employee_user_id,
+            verb=f"Your attendance request for \
+                {attendance.attendance_date} is validated",
+            verb_ar=f"تم التحقق من طلب حضورك في تاريخ \
+                {attendance.attendance_date}",
+            verb_de=f"Ihr Anwesenheitsantrag für das Datum \
+                {attendance.attendance_date} wurde bestätigt",
+            verb_es=f"Se ha validado su solicitud de asistencia \
+                para la fecha {attendance.attendance_date}",
+            verb_fr=f"Votre demande de présence pour la date \
+                {attendance.attendance_date} est validée",
+            redirect=f"/attendance/request-attendance-view?id={attendance.id}",
+            icon="checkmark-circle-outline",
+        )
+        if attendance.employee_id.employee_work_info.reporting_manager_id:
+            reporting_manager = (
+                attendance.employee_id.employee_work_info.reporting_manager_id.employee_user_id
+            )
+            user_last_name = get_employee_last_name(attendance)
+            notify.send(
+                request.user,
+                recipient=reporting_manager,
+                verb=f"{employee.employee_first_name} {user_last_name}'s\
+                    attendance request for {attendance.attendance_date} is validated",
+                verb_ar=f"تم التحقق من طلب الحضور لـ {employee.employee_first_name} \
+                    {user_last_name} في {attendance.attendance_date}",
+                verb_de=f"Die Anwesenheitsanfrage von {employee.employee_first_name} \
+                    {user_last_name} für den {attendance.attendance_date} wurde validiert",
+                verb_es=f"Se ha validado la solicitud de asistencia de \
+                    {employee.employee_first_name} {user_last_name} para el {attendance.attendance_date}",
+                verb_fr=f"La demande de présence de {employee.employee_first_name} \
+                    {user_last_name} pour le {attendance.attendance_date} a été validée",
+                redirect=f"/attendance/request-attendance-view?id={attendance.id}",
+                icon="checkmark-circle-outline",
+            )
+    return HttpResponse("success")
+
+
+@login_required
+@manager_can_enter("attendance.delete_attendance")
+def bulk_reject_attendance_request(request):
+    """
+    This method is used to delete bulk attendance request
+    """
+    ids = request.POST["ids"]
+    ids = json.loads(ids)
+    for attendance_id in ids:
+        try:
+            attendance = Attendance.objects.get(id=attendance_id)
+            if (
+                attendance.employee_id.employee_user_id == request.user
+                or is_reportingmanager(request)
+                or request.user.has_perm("attendance.change_attendance")
+            ):
+                attendance.is_validate_request_approved = False
+                attendance.is_validate_request = False
+                attendance.request_description = None
+                attendance.requested_data = None
+                attendance.request_type = None
+                attendance.save()
+                if attendance.request_type == "create_request":
+                    attendance.delete()
+                    messages.success(request, _("The requested attendance is removed."))
+                else:
+                    messages.success(
+                        request, _("The requested attendance is rejected.")
+                    )
+                employee = attendance.employee_id
+                notify.send(
+                    request.user,
+                    recipient=employee.employee_user_id,
+                    verb=f"Your attendance request for {attendance.attendance_date} is rejected",
+                    verb_ar=f"تم رفض طلبك للحضور في تاريخ {attendance.attendance_date}",
+                    verb_de=f"Ihre Anwesenheitsanfrage für {attendance.attendance_date} wurde abgelehnt",
+                    verb_es=f"Tu solicitud de asistencia para el {attendance.attendance_date} ha sido rechazada",
+                    verb_fr=f"Votre demande de présence pour le {attendance.attendance_date} est rejetée",
+                    icon="close-circle-outline",
+                )
+        except (Attendance.DoesNotExist, OverflowError):
+            messages.error(request, _("Attendance request not found"))
+    return HttpResponse("success")
+
+
+@login_required
 @manager_can_enter("attendance.change_attendance")
 def edit_validate_attendance(request, attendance_id):
     """
@@ -495,3 +736,28 @@ def edit_validate_attendance(request, attendance_id):
                                 """
             )
     return render(request, "requests/attendance/update_form.html", {"form": form})
+
+
+@login_required
+@hx_request_required
+def get_employee_shift(request):
+    """
+    method used to get employee shift
+    """
+    employee_id = request.GET.get("employee_id")
+    shift = None
+    if employee_id:
+        employee = Employee.objects.get(id=employee_id)
+        shift = employee.get_shift
+    form = NewRequestForm()
+    if request.GET.get("bulk") and eval(request.GET.get("bulk")):
+        form = BulkAttendanceRequestForm()
+    form.fields["shift_id"].queryset = EmployeeShift.objects.all()
+    form.fields["shift_id"].initial = shift
+    shift_id = render_to_string(
+        "requests/attendance/form_field.html",
+        {
+            "field": form["shift_id"],
+        },
+    )
+    return HttpResponse(f"{shift_id}")

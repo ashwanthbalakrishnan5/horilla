@@ -1,4 +1,19 @@
 {% load i18n recruitmentfilters %}
+
+<!-- start of messages -->
+{% if messages %}
+<div class="oh-wrapper">
+  {% for message in messages %}
+  <div class="oh-alert-container">
+    <div class="oh-alert oh-alert--animated {{message.tags}}">
+      {{ message }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+<!-- end of messages -->
+
 <div class="oh-sticky-table oh-table--configurable candidate-table" id="candidateTable{{stage.id}}"
     data-stage-id="{{stage.id}}">
     <div class="oh-sticky-table__table oh-table__movable">
@@ -87,9 +102,8 @@
                     </div>
                     <input type="text" name="order" value="{{cand.id}}" hidden>
                 </div>
-                <div class="oh-sticky-table__sd oh-table-config__td"
+                <div class="oh-sticky-table__td oh-table-config__td"
                     style="text-decoration: none;width: 400px !important;">
-
                     {% for interview_schedule in cand.candidate_interview.all %}
                         {% if interview_schedule.interview_date|date:"Y-m-d" == now|date:"Y-m-d" %}
                             <div class="d-flex" style="flex-direction: row-reverse; margin-bottom:-30px;">
@@ -194,7 +208,9 @@
                                 <option value="{{sg.id}}" {% if sg == cand.stage_id %} selected{% endif %}>{{sg}}</option>
                             {% endfor %}
                         </select>
-                        <input onclick="$('#stageReloadContainer{{rec.id}}').click()" type="submit" hidden>
+                        <input onclick="setTimeout(() => {
+                            $('#stageReloadContainer{{rec.id}}').click()
+                                }, 100);" type="submit" hidden>
                     </form>
                 </div>
                 <div onclick="event.stopPropagation()" class="oh-sticky-table__td oh-table-config__td">
@@ -204,7 +220,6 @@
                                 hx-swap="innerHTML"
                                 data-target="#createModal" class="oh-btn oh-btn--light"
                                 data-toggle="oh-modal-toggle"
-                                onclick="$('#objectDetailsModal').addClass('oh-modal--show')"
                                 style="flex: 1 0 auto; width:20px;height: 40.68px; padding: 0;">
                             <ion-icon name="time-outline"></ion-icon>
                         </button>

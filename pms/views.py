@@ -64,7 +64,7 @@ from pms.models import (
 from .forms import (
     AddAssigneesForm,
     AnonymousFeedbackForm,
-    EmployeekeyResultForm,
+    EmployeeKeyResultForm,
     EmployeeObjectiveForm,
     FeedbackForm,
     KeyResultForm,
@@ -290,7 +290,8 @@ def view_key_result(request):
 
 
 @login_required
-@permission_required("payroll.view_key_result")
+@hx_request_required
+@permission_required("pms.view_key_result")
 def filter_key_result(request):
     """
     Filter and retrieve a list of key results based on the provided query parameters.
@@ -318,12 +319,14 @@ def filter_key_result(request):
 
 
 @login_required
+@hx_request_required
+@permission_required("pms.add_key_result")
 def key_result_create(request):
     """
-    This method renders form and template to create Ticket type
+    This method renders form and template to create key result
     """
     form = KRForm()
-    redirect_url = None
+    redirect_url = request.GET.get("data")
     if request.method == "POST":
         form = KRForm(request.POST)
         if form.is_valid():
@@ -333,14 +336,18 @@ def key_result_create(request):
                 _("Key result %(key_result)s created successfully")
                 % {"key_result": instance},
             )
+            mutable_get = request.GET.copy()
 
-            if request.POST.get("dynamic_create"):
-                obj_data = request.POST.get("dyanamic_create")
-                obj_data = obj_data.replace("create_new_key_result", str(instance.id))
+            key_result_ids = mutable_get.getlist("key_result_id", [])
+            if "create_new_key_result" in key_result_ids:
+                key_result_ids.remove("create_new_key_result")
+            key_result_ids.append(str(instance.id))
+            mutable_get.setlist("key_result_id", key_result_ids)
 
-                # Redirect to the desired URL with encoded query parameters
-                redirect_url = f"/pms/objective-creation?{obj_data}"
-                form = KRForm()
+            redirect_url = f"/pms/objective-creation/?data={mutable_get.urlencode()}"
+        else:
+            redirect_url = request.GET.urlencode()
+
     return render(
         request,
         "okr/key_result/key_result_form.html",
@@ -349,7 +356,8 @@ def key_result_create(request):
 
 
 @login_required
-@permission_required("payroll.add_key_result")
+@hx_request_required
+@permission_required("pms.add_key_result")
 def kr_create_or_update(request, kr_id=None):
     """
     View function for creating or updating a Key Result.
@@ -361,11 +369,6 @@ def kr_create_or_update(request, kr_id=None):
     Returns:
     Renders a form to create or update a Key Result.
     """
-    form = KRForm()
-    key_result = False
-
-
-def kr_create_or_update(request, kr_id=None):
     form = KRForm()
     kr = False
     key_result = False
@@ -397,10 +400,9 @@ def kr_create_or_update(request, kr_id=None):
 
     return render(request, "okr/key_result/real_kr_form.html", {"form": form})
 
-    return render(request, "okr/key_result/real_kr_form.html", {"form": form})
-
 
 @login_required
+@hx_request_required
 def add_assignees(request, obj_id):
     """
     this function is used to add assigneesto the objective
@@ -622,7 +624,7 @@ def objective_filter_pagination(request, objective_own, objective_all):
 
 
 @login_required
-# @hx_request_required
+@hx_request_required
 def objective_list_search(request):
     """
     This view is used to to search objective,  returns searched and filtered objects.
@@ -857,7 +859,7 @@ def objective_detailed_view_comment(request, id):
 
 
 @login_required
-# @hx_request_required
+@hx_request_required
 def emp_objective_search(request, obj_id):
     """
     This view is used to to search employee objective,returns searched and filtered objects.
@@ -886,6 +888,7 @@ def emp_objective_search(request, obj_id):
 
 
 @login_required
+@hx_request_required
 def kr_table_view(request, emp_objective_id):
     """
     Renders a table view of Key Results associated with an employee objective.
@@ -1033,6 +1036,7 @@ def objective_archive(request, id):
 
 
 @login_required
+@hx_request_required
 @pms_owner_and_manager_can_enter(perm="pms.view_employeeobjective")
 def view_employee_objective(request, emp_obj_id):
     """
@@ -1051,6 +1055,7 @@ def view_employee_objective(request, emp_obj_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="pms.add_employeeobjective")
 def update_employee_objective(request, emp_obj_id):
     """
@@ -1108,12 +1113,17 @@ def delete_employee_objective(request, emp_obj_id):
             redirect to detailed of employee objective
     """
     emp_objective = EmployeeObjective.objects.get(id=emp_obj_id)
-    employee = emp_objective.employee_id
-    objective = emp_objective.objective_id
     single_view = request.GET.get("single_view")
-    emp_objective.delete()
-    objective.assignees.remove(employee)
-    messages.success(request, _("Objective deleted successfully!."))
+    if emp_objective.employee_key_result.exists():
+        messages.warning(
+            request, _("You can't delete this objective,related entries exists")
+        )
+    else:
+        employee = emp_objective.employee_id
+        objective = emp_objective.objective_id
+        emp_objective.delete()
+        objective.assignees.remove(employee)
+        messages.success(request, _("Objective deleted successfully!."))
     if not single_view:
         return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
     else:
@@ -1573,7 +1583,7 @@ def filter_pagination_feedback(
 
 
 @login_required
-# @hx_request_required
+@hx_request_required
 def feedback_list_search(request):
     """
     This view is used to filter or search the feedback object  ,
@@ -1700,9 +1710,11 @@ def feedback_detailed_view(request, id, **kwargs):
         it will return the feedback object to feedback_detailed_view template .
     """
     feedback = Feedback.objects.get(id=id)
+    feedback_started = Answer.objects.filter(feedback_id=id)
     current_date = datetime.datetime.now()
     context = {
         "feedback": feedback,
+        "feedback_started": feedback_started,
         "feedback_status": Feedback.STATUS_CHOICES,
         "current_date": current_date,
     }
@@ -2177,6 +2189,7 @@ def question_template_view(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="pms.view_questiontemplate")
 def question_template_hx_view(request):
     """
@@ -2227,6 +2240,7 @@ def question_template_detailed_view(request, template_id, **kwargs):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="pms.change_questiontemplate")
 def question_template_update(request, template_id):
     """
@@ -2352,7 +2366,7 @@ def period_update(request, period_id):
         form = PeriodForm(request.POST, instance=period)
         if form.is_valid():
             form.save()
-            messages.info(request, _("Period updated  Successfully. "))
+            messages.success(request, _("Period updated  Successfully. "))
         else:
             context["form"] = form
     return render(request, "period/period_update.html", context)
@@ -2371,7 +2385,7 @@ def period_delete(request, period_id):
     try:
         obj_period = Period.objects.get(id=period_id)
         obj_period.delete()
-        messages.info(request, _("Period deleted successfully."))
+        messages.success(request, _("Period deleted successfully."))
     except Period.DoesNotExist:
         messages.error(request, _("Period not found."))
     except ProtectedError:
@@ -2754,6 +2768,7 @@ def objective_select_filter(request):
 
 
 @login_required
+@hx_request_required
 def anonymous_feedback_add(request):
     """
     View function for adding anonymous feedback.
@@ -2800,6 +2815,7 @@ def anonymous_feedback_add(request):
 
 
 @login_required
+@hx_request_required
 def edit_anonymous_feedback(request, obj_id):
     """
     View function for editing anonymous feedback.
@@ -2850,6 +2866,7 @@ def archive_anonymous_feedback(request, obj_id):
 
 
 @login_required
+@permission_required("pms.delete_anonymousfeedback")
 def delete_anonymous_feedback(request, obj_id):
     """
     Deletes an anonymous feedback entry.
@@ -2881,6 +2898,7 @@ def delete_anonymous_feedback(request, obj_id):
 
 
 @login_required
+@hx_request_required
 def view_single_anonymous_feedback(request, obj_id):
     """
     Renders a view to display a single anonymous feedback entry.
@@ -2897,6 +2915,7 @@ def view_single_anonymous_feedback(request, obj_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="pms.add_employeekeyresult")
 def employee_keyresult_creation(request, emp_obj_id):
     """
@@ -2909,11 +2928,11 @@ def employee_keyresult_creation(request, emp_obj_id):
     """
     emp_objective = EmployeeObjective.objects.get(id=emp_obj_id)
     employee = emp_objective.employee_id
-    emp_key_result = EmployeekeyResultForm(
+    emp_key_result = EmployeeKeyResultForm(
         initial={"employee_objective_id": emp_objective}
     )
     if request.method == "POST":
-        emp_key_result = EmployeekeyResultForm(request.POST)
+        emp_key_result = EmployeeKeyResultForm(request.POST)
         if emp_key_result.is_valid():
             emp_key_result.save()
             emp_objective.update_objective_progress()
@@ -2945,6 +2964,7 @@ def employee_keyresult_creation(request, emp_obj_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="pms.add_employeekeyresult")
 def employee_keyresult_update(request, kr_id):
     """
@@ -2957,9 +2977,9 @@ def employee_keyresult_update(request, kr_id):
     """
     emp_kr = EmployeeKeyResult.objects.get(id=kr_id)
     employee = emp_kr.employee_objective_id.employee_id
-    emp_key_result = EmployeekeyResultForm(instance=emp_kr)
+    emp_key_result = EmployeeKeyResultForm(instance=emp_kr)
     if request.method == "POST":
-        emp_key_result = EmployeekeyResultForm(request.POST, instance=emp_kr)
+        emp_key_result = EmployeeKeyResultForm(request.POST, instance=emp_kr)
         if emp_key_result.is_valid():
             emp_key_result.save()
             emp_kr.employee_objective_id.update_objective_progress()
@@ -3069,8 +3089,10 @@ def view_meetings(request):
     requests_ids = json.dumps([instance.id for instance in meetings.object_list])
     data_dict = parse_qs(previous_data)
     get_key_instances(Meetings, data_dict)
+    all_meetings = Meetings.objects.filter()
 
     context = {
+        "all_meetings": all_meetings,
         "meetings": meetings,
         "filter_form": filter_form.form,
         "requests_ids": requests_ids,
@@ -3079,6 +3101,7 @@ def view_meetings(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("pms.add_meetings")
 def create_meetings(request):
     """
@@ -3099,7 +3122,67 @@ def create_meetings(request):
     if request.method == "POST":
         form = MeetingsForm(request.POST, instance=instance)
         if form.is_valid():
-            form.save()
+            instance = form.save()
+            managers = [
+                manager.employee_user_id for manager in form.cleaned_data["manager"]
+            ]
+            answer_employees = [
+                answer_emp.employee_user_id
+                for answer_emp in form.cleaned_data["answer_employees"]
+            ]
+            employees = form.cleaned_data["employee_id"]
+            employees = [
+                employee.employee_user_id
+                for employee in employees.exclude(
+                    id__in=form.cleaned_data["answer_employees"]
+                )
+            ]
+
+            try:
+                notify.send(
+                    request.user.employee_get,
+                    recipient=answer_employees,
+                    verb=f"You have been added as an answerable employee for the meeting {instance.title}",
+                    verb_ar=f"لقد تمت إضافتك كموظف مسؤول عن الاجتماع {instance.title}",
+                    verb_de=f"Du wurden als Mitarbeiter zum Ausfüllen für das {instance.title}-Meeting hinzugefügt",
+                    verb_es=f"Se le ha agregado como empleado responsable de la reunión {instance.title}",
+                    verb_fr=f"Vous avez été ajouté en tant que employé responsable pour la réunion {instance.title}",
+                    icon="information",
+                    redirect=f"/pms/view-meetings?search={instance.title}",
+                )
+            except Exception as error:
+                pass
+
+            try:
+                notify.send(
+                    request.user.employee_get,
+                    recipient=employees,
+                    verb=f"You have been added to the meeting {instance.title}",
+                    verb_ar=f"لقد تمت إضافتك إلى اجتماع {instance.title}.",
+                    verb_de=f"Sie wurden zur {instance.title} Besprechung hinzugefügt",
+                    verb_es=f"Te han agregado a la reunión {instance.title}",
+                    verb_fr=f"Vous avez été ajouté à la réunion {instance.title}",
+                    icon="information",
+                    redirect=f"/pms/view-meetings?search={instance.title}",
+                )
+            except Exception as error:
+                pass
+
+            try:
+                notify.send(
+                    request.user.employee_get,
+                    recipient=managers,
+                    verb=f"You have been added as a manager for the meeting {instance.title}",
+                    verb_ar=f"لقد تمت إضافتك كمدير للاجتماع {instance.title}",
+                    verb_de=f"Sie wurden als Manager für das Meeting {instance.title} hinzugefügt",
+                    verb_es=f"Se le ha agregado como administrador de la reunión {instance.title}",
+                    verb_fr=f"Vous avez été ajouté en tant que responsable de réunion {instance.title}",
+                    icon="information",
+                    redirect=f"/pms/view-meetings?search={instance.title}",
+                )
+            except Exception as error:
+                pass
+
             messages.success(request, _("Meeting added successfully"))
             return HttpResponse("<script>window.location.reload()</script>")
     return render(
@@ -3163,6 +3246,7 @@ def meeting_employee_remove(request, meet_id, employee_id):
 
 
 @login_required
+@hx_request_required
 def filter_meetings(request):
     """
     This view is used to filter the meeting ,
@@ -3217,6 +3301,7 @@ def add_response(request, id):
 
 
 @login_required
+@hx_request_required
 @meeting_manager_can_enter("pms.change_meetings", answerable=True)
 def meeting_answer_get(request, id, **kwargs):
     """
@@ -3309,6 +3394,7 @@ def meeting_answer_view(request, id, emp_id, **kwargs):
 
 
 @login_required
+@hx_request_required
 @meeting_manager_can_enter("pms.change_meetings", answerable=True)
 def meeting_question_template_view(request, meet_id):
     """

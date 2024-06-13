@@ -63,49 +63,11 @@ class ObjectiveForm(BaseForm):
     A form to create or update instances of the Objective, model.
     """
 
-    # period = forms.ModelChoiceField(
-    #     queryset=Period.objects.all(),
-    #     widget=forms.Select(
-    #         attrs={
-    #             "onChange": "periodCheck(this)",
-    #         },
-    #     ),
-    #     required=False,
-    # )
-    # assignees = forms.ModelMultipleChoiceField(
-    #     queryset=Employee.objects.all(),
-    #     required=False,
-    #     widget=forms.SelectMultiple(attrs={'style': 'display:none;'})
-    # )
-    # assignees = HorillaMultiSelectField(
-    #     queryset=Employee.objects.all(),
-    #     widget=HorillaMultiSelectWidget(
-    #         filter_route_name="employee-widget-filter",
-    #         filter_class=EmployeeFilter,
-    #         filter_instance_contex_name="f",
-    #         filter_template_path="employee_filters.html",
-    #         required=True,
-    #     ),
-    #     label="Assignees",
-    # )
     start_date = forms.DateField(
         required=False,
         widget=forms.DateInput(attrs={"class": "oh-input w-100", "type": "date"}),
     )
     add_assignees = forms.BooleanField(required=False)
-    # default_key_results = forms.ModelMultipleChoiceField(
-    #     queryset=KeyResult.objects.all(),
-    #     required=False,
-    #     widget=forms.SelectMultiple(
-    #         attrs={
-    #             "class": "oh-select oh-select-2 select2-hidden-accessible",
-    #             "onchange": "keyResultChange($(this))",
-    #         }
-    #     ),
-    #     # widget=forms.SelectMultiple(attrs={'style': 'display:none;'})
-    # )
-
-    # archive = forms.BooleanField()
 
     class Meta:
         """
@@ -116,9 +78,10 @@ class ObjectiveForm(BaseForm):
         fields = [
             "title",
             "managers",
-            "description",
+            "duration_unit",
             "duration",
             "key_result_id",
+            "description",
             "add_assignees",
             "assignees",
             "start_date",
@@ -131,20 +94,12 @@ class ObjectiveForm(BaseForm):
                     "onchange": "keyResultChange($(this))",
                 }
             ),
-            #     "start_date": forms.DateInput(
-            #         attrs={"class": "oh-input w-100", "type": "date"}
-            #     ),
-            #     "end_date": forms.DateInput(
-            #         attrs={"class": "oh-input w-100", "type": "date"}
-            #     ),
         }
 
     def __init__(self, *args, **kwargs):
         """
         Constructor for ObjectiveForm. If an instance is provided, set initial values for date fields
         """
-        # if instance := kwargs.get("instance"):
-        #     kwargs["initial"] = set_date_field_initial(instance)
 
         employee = kwargs.pop(
             "employee", None
@@ -169,12 +124,6 @@ class ObjectiveForm(BaseForm):
         self.fields["key_result_id"].choices.append(
             ("create_new_key_result", "Create new Key result")
         )
-
-        # self.fields['start_date'].widget.attrs.update({"style":"display:none;"})
-        # self.fields['assignees'].widget.attrs.update({"style":"display:none;"})
-
-        # self.fields["period"].choices = list(self.fields["period"].choices)
-        # self.fields["period"].choices.append(("create_new_period", "Create new period"))
 
     def clean(self):
         """
@@ -256,6 +205,13 @@ class AddAssigneesForm(BaseForm):
                 "assignees"
             ].queryset.exclude(id__in=self.instance.assignees.all())
 
+    def clean(self):
+        cleaned_data = super().clean()
+        assignees = cleaned_data.get("assignees")
+        if len(assignees) == 0:
+            raise forms.ValidationError({"assignees": _("This field is required.")})
+        return cleaned_data
+
 
 class EmployeeObjectiveForm(BaseForm):
     """
@@ -314,7 +270,7 @@ class EmployeeObjectiveForm(BaseForm):
         return table_html
 
 
-class EmployeekeyResultForm(BaseForm):
+class EmployeeKeyResultForm(BaseForm):
     """
     A form to create or update instances of the EmployeeKeyResult, model.
     """
@@ -765,6 +721,14 @@ class QuestionTemplateForm(ModelForm):
             }
         )
 
+    def as_p(self):
+        """
+        Render the form fields as HTML table rows with Bootstrap styling.
+        """
+        context = {"form": self}
+        table_html = render_to_string("common_form.html", context)
+        return table_html
+
 
 class QuestionForm(ModelForm):
     """
@@ -919,6 +883,14 @@ class PeriodForm(ModelForm):
                 "class": "oh-select oh-select-2 w-100",
             }
         )
+
+    def as_p(self):
+        """
+        Render the form fields as HTML table rows with Bootstrap styling.
+        """
+        context = {"form": self}
+        table_html = render_to_string("common_form.html", context)
+        return table_html
 
     def clean(self):
         cleaned_data = super().clean()

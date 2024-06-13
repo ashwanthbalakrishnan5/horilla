@@ -1,13 +1,20 @@
 {% load i18n %}{% load widget_tweaks %} {% load attendancefilters %}
 
 <div class="oh-general__tab-target oh-profile-section" id="personal">
+  {% if form.verbose_name %}
+    <div class="oh-payslip__header">
+      <div class="oh-payslip__header-left">
+        <div class="oh-payroll__component-title">{{ form.verbose_name }}</div>
+      </div>
+    </div>
+  {% endif %}
   <div class="oh-profile-section__card">
     <div class="row">
       <div class="col-12">{{form.non_field_errors}}</div>
       {% for field in form.visible_fields %}
       {% if field.field.widget|is_text_area %}
       <label
-      class="oh-label"
+      class="oh-label {% if field.field.required %} required-star{% endif %}"
       for="id_{{ field.name }}"
       title="{{ field.help_text|safe }}"
       >{{ field.label }}</label
@@ -21,7 +28,7 @@
       {% else %}
       <div class="col-12 col-md-6">
         <label
-          class="oh-label"
+          class="oh-label {% if field.field.required %} required-star{% endif %}"
           for="id_{{ field.name }}"
           title="{{ field.help_text|safe }}"
           >{{ field.label }}</label

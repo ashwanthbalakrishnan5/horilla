@@ -11,13 +11,17 @@ This module is part of the recruitment project and is intended to
 provide the main entry points for interacting with the application's functionality.
 """
 
+import ast
 import contextlib
-import datetime
+import io
 import json
 import os
+import re
+from datetime import datetime
 from itertools import chain
 from urllib.parse import parse_qs
 
+import fitz
 from django import template
 from django.conf import settings
 from django.contrib import messages
@@ -60,6 +64,7 @@ from recruitment.forms import (
     AddCandidateForm,
     CandidateCreationForm,
     CandidateExportForm,
+    OfferLetterForm,
     RecruitmentCreationForm,
     RejectReasonForm,
     ScheduleInterviewForm,
@@ -191,6 +196,7 @@ def pipeline_grouper(request, recruitments):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="recruitment.add_recruitment")
 def recruitment(request):
     """
@@ -367,6 +373,7 @@ def recruitment_pipeline(request):
     recruitments = paginator_qry_recruitment_limited(
         filter_obj.qs, request.GET.get("page")
     )
+
     now = timezone.now()
 
     return render(
@@ -386,6 +393,7 @@ cache = {}
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.view_recruitment")
 def filter_pipeline(request):
     """
@@ -519,6 +527,7 @@ def limited_paginator_qry(queryset, page):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.view_recruitment")
 def candidate_component(request):
     """
@@ -593,18 +602,22 @@ def recruitment_archive(request, rec_id):
     args:
         rec_id: The id of the Recruitment
     """
-
-    recruitment = Recruitment.objects.get(id=rec_id)
-    if recruitment.is_active:
-        recruitment.is_active = False
-    else:
-        recruitment.is_active = True
-    recruitment.save()
+    try:
+        recruitment = Recruitment.objects.get(id=rec_id)
+        if recruitment.is_active:
+            recruitment.is_active = False
+        else:
+            recruitment.is_active = True
+        recruitment.save()
+    except (Recruitment.DoesNotExist, OverflowError):
+        messages.error(request, _("Recruitment Does not exists.."))
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
 @login_required
+@hx_request_required
 @recruitment_manager_can_enter(perm="recruitment.change_stage")
 def stage_update_pipeline(request, stage_id):
     """
@@ -643,6 +656,7 @@ def stage_update_pipeline(request, stage_id):
 
 
 @login_required
+@hx_request_required
 @recruitment_manager_can_enter(perm="recruitment.change_recruitment")
 def recruitment_update_pipeline(request, rec_id):
     """
@@ -690,11 +704,13 @@ def recruitment_close_pipeline(request, rec_id):
     """
     This method is used to close recruitment from pipeline view
     """
-    recruitment_obj = Recruitment.objects.get(id=rec_id)
-    recruitment_obj.closed = True
-    recruitment_obj.save()
-
-    messages.success(request, "Recruitment closed successfully")
+    try:
+        recruitment_obj = Recruitment.objects.get(id=rec_id)
+        recruitment_obj.closed = True
+        recruitment_obj.save()
+        messages.success(request, "Recruitment closed successfully")
+    except (Recruitment.DoesNotExist, OverflowError):
+        messages.error(request, _("Recruitment Does not exists.."))
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
@@ -1121,6 +1137,7 @@ def stage_update(request, stage_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("recruitment.add_candidate")
 def add_candidate(request):
     """
@@ -1231,12 +1248,16 @@ def candidate_view(request):
     filter_obj = CandidateFilter(request.GET, queryset=candidates)
     export_fields = CandidateExportForm()
     export_obj = CandidateFilter(request.GET, queryset=candidates)
-    if candidate_all.exists():
+    if Candidate.objects.exists():
         template = "candidate/candidate_view.html"
     else:
         template = "candidate/candidate_empty.html"
     data_dict = parse_qs(previous_data)
     get_key_instances(Candidate, data_dict)
+
+    # Store the candidates in the session
+    request.session["filtered_candidates"] = [candidate.id for candidate in candidates]
+
     return render(
         request,
         template,
@@ -1255,6 +1276,7 @@ def candidate_view(request):
 
 
 @login_required
+@hx_request_required
 def interview_filter_view(request):
     """
     This method is used to filter Disciplinary Action.
@@ -1288,6 +1310,7 @@ def interview_filter_view(request):
     )
 
 
+@login_required
 def interview_view(request):
     """
     This method render all interviews to the template
@@ -1321,6 +1344,7 @@ def interview_view(request):
 
 
 @login_required
+@manager_can_enter(perm="recruitment.change_interviewschedule")
 def interview_employee_remove(request, interview_id, employee_id):
     """
     This view is used to remove the employees from the meeting ,
@@ -1332,7 +1356,7 @@ def interview_employee_remove(request, interview_id, employee_id):
     interview.employee_id.remove(employee_id)
     messages.success(request, "Interviewer removed succesfully.")
     interview.save()
-    return HttpResponse("<script>window.location.reload()</script>")
+    return redirect(interview_filter_view)
 
 
 @login_required
@@ -1371,6 +1395,7 @@ def candidate_view_list(request):
 
 
 @login_required
+@hx_request_required
 @permission_required(perm="recruitment.view_candidate")
 def candidate_view_card(request):
     """
@@ -1412,6 +1437,32 @@ def candidate_view_individual(request, cand_id, **kwargs):
     if len(rating_list) != 0:
         avg_rate = round(sum(rating_list) / len(rating_list))
 
+    # Retrieve the filtered candidate from the session
+    filtered_candidate_ids = request.session.get("filtered_candidates", [])
+
+    # Convert the string to an actual list of integers
+    requests_ids = (
+        ast.literal_eval(filtered_candidate_ids)
+        if isinstance(filtered_candidate_ids, str)
+        else filtered_candidate_ids
+    )
+
+    next_id = None
+    previous_id = None
+
+    for index, req_id in enumerate(requests_ids):
+        if req_id == cand_id:
+
+            if index == len(requests_ids) - 1:
+                next_id = None
+            else:
+                next_id = requests_ids[index + 1]
+            if index == 0:
+                previous_id = None
+            else:
+                previous_id = requests_ids[index - 1]
+            break
+
     now = timezone.now()
 
     return render(
@@ -1419,6 +1470,9 @@ def candidate_view_individual(request, cand_id, **kwargs):
         "candidate/individual.html",
         {
             "candidate": candidate_obj,
+            "previous": previous_id,
+            "next": next_id,
+            "requests_ids": requests_ids,
             "emp_list": existing_emails,
             "average_rate": avg_rate,
             "now": now,
@@ -1434,36 +1488,41 @@ def candidate_update(request, cand_id, **kwargs):
     Args:
         id : candidate_id
     """
-    candidate_obj = Candidate.objects.get(id=cand_id)
-    form = CandidateCreationForm(instance=candidate_obj)
-    path = "/recruitment/candidate-view"
-    if request.method == "POST":
-        form = CandidateCreationForm(
-            request.POST, request.FILES, instance=candidate_obj
-        )
-        if form.is_valid():
-            candidate_obj = form.save()
-            if candidate_obj.stage_id is None:
-                candidate_obj.stage_id = Stage.objects.filter(
-                    recruitment_id=candidate_obj.recruitment_id, stage_type="initial"
-                ).first()
-            if candidate_obj.stage_id is not None:
-                if (
-                    candidate_obj.stage_id.recruitment_id
-                    != candidate_obj.recruitment_id
-                ):
-                    candidate_obj.stage_id = (
-                        candidate_obj.recruitment_id.stage_set.filter(
-                            stage_type="initial"
-                        ).first()
-                    )
-            if request.GET.get("onboarding") == "True":
-                candidate_obj.hired = True
-                path = "/onboarding/candidates-view"
-            candidate_obj.save()
-            messages.success(request, _("Candidate Updated Successfully."))
-            return redirect(path)
-    return render(request, "candidate/candidate_create_form.html", {"form": form})
+    try:
+        candidate_obj = Candidate.objects.get(id=cand_id)
+        form = CandidateCreationForm(instance=candidate_obj)
+        path = "/recruitment/candidate-view"
+        if request.method == "POST":
+            form = CandidateCreationForm(
+                request.POST, request.FILES, instance=candidate_obj
+            )
+            if form.is_valid():
+                candidate_obj = form.save()
+                if candidate_obj.stage_id is None:
+                    candidate_obj.stage_id = Stage.objects.filter(
+                        recruitment_id=candidate_obj.recruitment_id,
+                        stage_type="initial",
+                    ).first()
+                if candidate_obj.stage_id is not None:
+                    if (
+                        candidate_obj.stage_id.recruitment_id
+                        != candidate_obj.recruitment_id
+                    ):
+                        candidate_obj.stage_id = (
+                            candidate_obj.recruitment_id.stage_set.filter(
+                                stage_type="initial"
+                            ).first()
+                        )
+                if request.GET.get("onboarding") == "True":
+                    candidate_obj.hired = True
+                    path = "/onboarding/candidates-view"
+                candidate_obj.save()
+                messages.success(request, _("Candidate Updated Successfully."))
+                return redirect(path)
+        return render(request, "candidate/candidate_create_form.html", {"form": form})
+    except (Candidate.DoesNotExist, OverflowError):
+        messages.error(request, _("Candidate Does not exists.."))
+    return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
 
 @login_required
@@ -1474,33 +1533,33 @@ def candidate_conversion(request, cand_id, **kwargs):
     Args:
         cand_id : candidate instance id
     """
-    candidate_obj = Candidate.objects.filter(id=cand_id)
-    for detail in candidate_obj:
-        can_name = detail.name
-        can_mob = detail.mobile
-        can_job = detail.job_position_id
-        can_dep = can_job.department_id
-        can_mail = detail.email
-        can_gender = detail.gender
-        can_company = detail.recruitment_id.company_id
-
-    user_exists = User.objects.filter(email=can_mail).exists()
+    candidate_obj = Candidate.objects.filter(id=cand_id).first()
+    can_name = candidate_obj.name
+    can_mob = candidate_obj.mobile
+    can_job = candidate_obj.job_position_id
+    can_dep = can_job.department_id
+    can_mail = candidate_obj.email
+    can_gender = candidate_obj.gender
+    can_company = candidate_obj.recruitment_id.company_id
+    user_exists = User.objects.filter(username=can_mail).exists()
     if user_exists:
         messages.error(request, _("Employee instance already exist"))
-    elif not Employee.objects.filter(email=can_mail).exists():
+    elif not Employee.objects.filter(employee_user_id__username=can_mail).exists():
         new_employee = Employee.objects.create(
             employee_first_name=can_name,
             email=can_mail,
             phone=can_mob,
             gender=can_gender,
         )
-        new_employee.save()
-        EmployeeWorkInformation.objects.create(
-            employee_id=new_employee,
-            job_position_id=can_job,
-            department_id=can_dep,
-            company_id=can_company,
+        candidate_obj.converted_employee_id = new_employee
+        candidate_obj.save()
+        work_info, created = EmployeeWorkInformation.objects.get_or_create(
+            employee_id=new_employee
         )
+        work_info.job_position_id = can_job
+        work_info.department_id = can_dep
+        work_info.company_id = can_company
+        work_info.save()
         messages.success(request, _("Employee instance created successfully"))
     else:
         messages.info(request, "A employee with this mail already exists")
@@ -1574,11 +1633,13 @@ def form_send_mail(request, cand_id=None):
             "templates": templates,
             "candidates": candidates,
             "stage_id": stage_id,
+            "searchWords": OfferLetterForm().get_template_language(),
         },
     )
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.add_interviewschedule")
 def interview_schedule(request, cand_id):
     """
@@ -1618,6 +1679,7 @@ def interview_schedule(request, cand_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.add_interviewschedule")
 def create_interview_schedule(request):
     """
@@ -1656,6 +1718,7 @@ def create_interview_schedule(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.delete_interviewschedule")
 def interview_delete(request, interview_id):
     """
@@ -1668,12 +1731,13 @@ def interview_delete(request, interview_id):
     interview.delete()
     messages.success(request, "Interview deleted successfully.")
     if view == "true":
-        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+        return redirect(interview_filter_view)
     else:
         return HttpResponse("<script>window.location.reload()</script>")
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.change_interviewschedule")
 def interview_edit(request, interview_id):
     """
@@ -1962,6 +2026,7 @@ def skill_zone_view(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.add_skillzone")
 def skill_zone_create(request):
     """
@@ -1982,6 +2047,7 @@ def skill_zone_create(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.change_skillzone")
 def skill_zone_update(request, sz_id):
     """
@@ -2069,6 +2135,7 @@ def skill_zone_archive(request, sz_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.view_skillzone")
 def skill_zone_filter(request):
     """
@@ -2153,6 +2220,7 @@ def skill_zone_cand_card_view(request, sz_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.add_skillzonecandidate")
 def skill_zone_candidate_create(request, sz_id):
     """
@@ -2179,6 +2247,7 @@ def skill_zone_candidate_create(request, sz_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.change_skillzonecandidate")
 def skill_zone_cand_edit(request, sz_cand_id):
     """
@@ -2309,6 +2378,7 @@ def skill_zone_cand_delete(request, sz_cand_id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter(perm="recruitment.change_candidate")
 def to_skill_zone(request, cand_id):
     """
@@ -2339,7 +2409,7 @@ def to_skill_zone(request, cand_id):
                     zone_candidate.skill_zone_id = zone
                     zone_candidate.reason = form.cleaned_data["reason"]
                     zone_candidate.save()
-            messages.success(request, "Candidate Added to skill zone successfullu")
+            messages.success(request, "Candidate Added to skill zone successfully")
             return HttpResponse("<script>window.location.reload()</script>")
     return render(request, template, {"form": form, "cand_id": cand_id})
 
@@ -2401,6 +2471,7 @@ def get_mail_log(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("recruitment.add_recruitmentgeneralsetting")
 def candidate_self_tracking(request):
     """
@@ -2414,6 +2485,7 @@ def candidate_self_tracking(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("recruitment.add_recruitmentgeneralsetting")
 def candidate_self_tracking_rating_option(request):
     """
@@ -2450,6 +2522,7 @@ def candidate_self_status_tracking(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("recruitment.add_rejectreason")
 def create_reject_reason(request):
     """
@@ -2481,3 +2554,142 @@ def delete_reject_reason(request):
         reasons.delete()
         messages.success(request, f"{reason.title} is deleted.")
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+
+
+from pprint import pprint
+
+from base.countries import country_arr, s_a, states
+
+
+def extract_text_with_font_info(pdf):
+    pdf_bytes = pdf.read()
+    pdf_doc = io.BytesIO(pdf_bytes)
+    doc = fitz.open("pdf", pdf_doc)
+    text_info = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        blocks = page.get_text("dict")["blocks"]
+        for block in blocks:
+            try:
+                for line in block["lines"]:
+                    for span in line["spans"]:
+                        text_info.append(
+                            {
+                                "text": span["text"],
+                                "font_size": span["size"],
+                                "capitalization": sum(
+                                    1 for c in span["text"] if c.isupper()
+                                )
+                                / len(span["text"]),
+                            }
+                        )
+            except:
+                pass
+
+    return text_info
+
+
+def rank_text(text_info):
+    ranked_text = sorted(
+        text_info, key=lambda x: (x["font_size"], x["capitalization"]), reverse=True
+    )
+    return ranked_text
+
+
+def dob_matching(dob):
+    date_formats = [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d-%m-%Y",
+        "%d/%m/%Y",
+        "%Y.%m.%d",
+        "%d.%m.%Y",
+    ]
+
+    for fmt in date_formats:
+        try:
+            parsed_date = datetime.strptime(dob, fmt)
+            return parsed_date.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return dob
+
+
+def extract_info(pdf):
+    text_info = extract_text_with_font_info(pdf)
+    ranked_text = rank_text(text_info)
+
+    phone_pattern = re.compile(r"\b\+?\d{1,2}\s?\d{9,10}\b")
+    dob_pattern = re.compile(
+        r"\b(?:\d{1,2}|\d{4})[-/.,]\d{1,2}[-/.,](?:\d{1,2}|\d{4})\b"
+    )
+    email_pattern = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+    zip_code_pattern = re.compile(r"\b\d{5,6}(?:-\d{4})?\b")
+
+    extracted_info = {
+        "full_name": "",
+        "address": "",
+        "country": "",
+        "state": "",
+        "phone_number": "",
+        "dob": "",
+        "email_id": "",
+        "zip": "",
+    }
+
+    name_candidates = [
+        item["text"]
+        for item in ranked_text
+        if item["font_size"] == max(item["font_size"] for item in ranked_text)
+    ]
+
+    if name_candidates:
+        extracted_info["full_name"] = " ".join(name_candidates)
+
+    for item in ranked_text:
+        text = item["text"]
+
+        if not text:
+            continue
+
+        if not extracted_info["phone_number"]:
+            phone_match = phone_pattern.search(text)
+            if phone_match:
+                extracted_info["phone_number"] = phone_match.group()
+
+        if not extracted_info["dob"]:
+            dob_match = dob_pattern.search(text)
+            if dob_match:
+                extracted_info["dob"] = dob_matching(dob_match.group())
+
+        if not extracted_info["zip"]:
+            zip_match = zip_code_pattern.search(text)
+            if zip_match:
+                extracted_info["zip"] = zip_match.group()
+
+        if not extracted_info["email_id"]:
+            email_match = email_pattern.search(text)
+            if email_match:
+                extracted_info["email_id"] = email_match.group()
+
+        if "address" in text.lower() and not extracted_info["address"]:
+            extracted_info["address"] = text.replace("Address:", "").strip()
+
+        for item in text.split(" "):
+            if item.capitalize() in country_arr:
+                extracted_info["country"] = item
+
+        for item in text.split(" "):
+            if item.capitalize() in states:
+                extracted_info["state"] = item
+
+    return extracted_info
+
+
+def resume_completion(request):
+    resume_file = request.FILES["resume"]
+    contact_info = extract_info(resume_file)
+
+    return JsonResponse(contact_info)

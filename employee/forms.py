@@ -282,16 +282,16 @@ class EmployeeWorkInformationForm(ModelForm):
                 self.fields[field].disabled = True
         field_names = {
             "Department": "department",
-            # "Job Position": "job_position",
-            # "Job Role": "job_role",
+            "Job Position": "job_position",
+            "Job Role": "job_role",
             "Work Type": "work_type",
             "Employee Type": "employee_type",
             "Shift": "employee_shift",
         }
         urls = {
             "Department": "#dynamicDept",
-            # "Job Position": "#dynamicJobPosition",
-            # "Job Role": "#dynamicJobRole",
+            "Job Position": "#dynamicJobPosition",
+            "Job Role": "#dynamicJobRole",
             "Work Type": "#dynamicWorkType",
             "Employee Type": "#dynamicEmployeeType",
             "Shift": "#dynamicShift",
@@ -666,9 +666,6 @@ class ActiontypeForm(ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        account_block_unblock = AccountBlockUnblock.objects.first()
-        if not account_block_unblock.is_enabled:
-            self.fields.pop("block_option")
 
         self.fields["action_type"].widget.attrs.update(
             {

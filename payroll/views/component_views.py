@@ -25,7 +25,12 @@ from base.backends import ConfiguredEmailBackend
 from base.methods import closest_numbers, filter_own_records, get_key_instances, sortby
 from base.models import Company
 from employee.models import Employee, EmployeeWorkInformation
-from horilla.decorators import login_required, owner_can_enter, permission_required
+from horilla.decorators import (
+    hx_request_required,
+    login_required,
+    owner_can_enter,
+    permission_required,
+)
 from leave.models import AvailableLeave
 from notifications.signals import notify
 from payroll.filters import (
@@ -269,6 +274,7 @@ def view_allowance(request):
 
 
 @login_required
+@hx_request_required
 def view_single_allowance(request, allowance_id):
     """
     This method is used render template to view the selected allowance instances
@@ -292,6 +298,7 @@ def view_single_allowance(request, allowance_id):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.view_allowance")
 def filter_allowance(request):
     """
@@ -341,6 +348,7 @@ def update_allowance(request, allowance_id, **kwargs):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.delete_allowance")
 def delete_allowance(request, allowance_id):
     """
@@ -363,7 +371,10 @@ def delete_allowance(request, allowance_id):
     except Exception as exception:
         messages.error(request, _("An error occurred while deleting the allowance"))
         messages.error(request, str(exception))
-    if request.path.split("/")[2] == "delete-employee-allowance":
+    if (
+        request.path.split("/")[2] == "delete-employee-allowance"
+        or not payroll.models.models.Allowance.objects.filter()
+    ):
         return HttpResponse("<script>window.location.reload();</script>")
     return redirect(filter_allowance)
 
@@ -409,6 +420,7 @@ def view_deduction(request):
 
 
 @login_required
+@hx_request_required
 def view_single_deduction(request, deduction_id):
     """
     This method is used render template to view all the deduction instances
@@ -457,6 +469,7 @@ def view_single_deduction(request, deduction_id):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.view_allowance")
 def filter_deduction(request):
     """
@@ -504,6 +517,7 @@ def update_deduction(request, deduction_id, **kwargs):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.delete_deduction")
 def delete_deduction(request, deduction_id, emp_id=None):
     instances_ids = request.GET.get("instances_ids")
@@ -527,12 +541,18 @@ def delete_deduction(request, deduction_id, emp_id=None):
     }
     http_hx_target = request.META.get("HTTP_HX_TARGET")
     redirected_path = paths.get(http_hx_target)
-    if http_hx_target and redirected_path:
-        return redirect(redirected_path)
-
-    return HttpResponseRedirect(
+    if http_hx_target:
+        if (
+            http_hx_target == "payroll-deduction-container"
+            and not Deduction.objects.filter()
+        ):
+            return HttpResponse("<script>window.location.reload();</script>")
+        if redirected_path:
+            return redirect(redirected_path)
+    default_redirect = (
         request.path if http_hx_target else request.META.get("HTTP_REFERER", "/")
     )
+    return HttpResponseRedirect(default_redirect)
 
 
 @login_required
@@ -779,6 +799,7 @@ def view_payslip(request):
 
 
 @login_required
+@hx_request_required
 def filter_payslip(request):
     """
     Filter and retrieve a list of payslips based on the provided query parameters.
@@ -938,6 +959,7 @@ def hx_create_allowance(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.add_payslip")
 def send_slip(request):
     """
@@ -1114,6 +1136,7 @@ def view_loans(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.add_loanaccount")
 def create_loan(request):
     """
@@ -1177,6 +1200,7 @@ def delete_loan(request):
 
 
 @login_required
+@hx_request_required
 @permission_required("payroll.view_loanaccount")
 def search_loan(request):
     """
@@ -1289,6 +1313,7 @@ def view_reimbursement(request):
 
 
 @login_required
+@hx_request_required
 def create_reimbursement(request):
     """
     This method is used to create reimbursement
@@ -1308,6 +1333,7 @@ def create_reimbursement(request):
 
 
 @login_required
+@hx_request_required
 def search_reimbursement(request):
     """
     This method is used to search/filter reimbursement
@@ -1446,8 +1472,8 @@ def delete_reimbursements(request):
     reimbursements = Reimbursement.objects.filter(id__in=ids)
     for reimbursement in reimbursements:
         user = reimbursement.employee_id.employee_user_id
-        reimbursement.delete()
-    # messages.success(request, "Reimbursements deleted")
+    reimbursements.delete()
+    messages.success(request, "Reimbursements deleted")
     notify.send(
         request.user.employee_get,
         recipient=user,

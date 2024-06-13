@@ -11,6 +11,7 @@ from attendance.models import AttendanceGeneralSetting
 from base.models import Company
 from base.urls import urlpatterns
 from employee.models import EmployeeGeneralSetting
+from horilla import horilla_apps
 from offboarding.models import OffboardingGeneralSetting
 from payroll.models.models import PayrollGeneralSetting
 from recruitment.models import RecruitmentGeneralSetting
@@ -99,12 +100,36 @@ urlpatterns.append(
 )
 
 
+def white_labelling_company(request):
+    white_labelling = getattr(horilla_apps, "WHITE_LABELLING", False)
+    if white_labelling:
+        hq = Company.objects.filter(hq=True).last()
+        try:
+            company = (
+                request.user.employee_get.get_company()
+                if request.user.employee_get.get_company()
+                else hq
+            )
+        except:
+            company = hq
+
+        return {
+            "white_label_company_name": company.company if company else "Horilla",
+            "white_label_company": company,
+        }
+    else:
+        return {
+            "white_label_company_name": "Horilla",
+            "white_label_company": None,
+        }
+
+
 def resignation_request_enabled(request):
     """
     Check weather resignation_request enabled of not in offboarding
     """
     first = OffboardingGeneralSetting.objects.first()
-    enabled_resignation_request = True
+    enabled_resignation_request = False
     if first:
         enabled_resignation_request = first.resignation_request
     return {"enabled_resignation_request": enabled_resignation_request}

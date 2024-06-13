@@ -22,7 +22,7 @@ from django.dispatch import receiver
 from django.utils.translation import gettext_lazy as _
 
 from base.horilla_company_manager import HorillaCompanyManager
-from base.models import Company, EmailLog, JobPosition
+from base.models import Company, JobPosition
 from employee.models import Employee
 from horilla.decorators import logger
 from horilla.models import HorillaModel
@@ -302,6 +302,14 @@ class Candidate(HorillaModel):
         null=True,
         verbose_name=_("Stage"),
     )
+    converted_employee_id = models.ForeignKey(
+        Employee,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="candidate_get",
+        verbose_name=_("Employee"),
+    )
     schedule_date = models.DateTimeField(
         blank=True, null=True, verbose_name=_("Schedule date")
     )
@@ -437,6 +445,10 @@ class Candidate(HorillaModel):
         """
         return self.email
 
+    def get_mail(self):
+        """ """
+        return self.get_email()
+
     def tracking(self):
         """
         This method is used to return the tracked history of the instance
@@ -447,11 +459,38 @@ class Candidate(HorillaModel):
         """
         This method is used to get last send mail
         """
+        from base.models import EmailLog
+
         return (
             EmailLog.objects.filter(to__icontains=self.email)
             .order_by("-created_at")
             .first()
         )
+
+    def get_interview(self):
+        """
+        This method is used to get the interview dates and times for the candidate for the mail templates
+        """
+
+        interviews = InterviewSchedule.objects.filter(candidate_id=self.id)
+        if interviews:
+            interview_info = "<table>"
+            interview_info += "<tr><th>Sl No.</th><th>Date</th><th>Time</th><th>Is Completed</th></tr>"
+            for index, interview in enumerate(interviews, start=1):
+                interview_info += f"<tr><td>{index}</td>"
+                interview_info += (
+                    f"<td class='dateformat_changer'>{interview.interview_date}</td>"
+                )
+                interview_info += (
+                    f"<td class='timeformat_changer'>{interview.interview_time}</td>"
+                )
+                interview_info += (
+                    f"<td>{'Yes' if interview.completed else 'No'}</td></tr>"
+                )
+            interview_info += "</table>"
+            return interview_info
+        else:
+            return ""
 
     def save(self, *args, **kwargs):
         # Check if the 'stage_id' attribute is not None
@@ -480,6 +519,16 @@ class Candidate(HorillaModel):
                     sequence=50,
                 )
             self.stage_id = cancelled_stage
+        if (
+            self.converted_employee_id
+            and Candidate.objects.filter(
+                converted_employee_id=self.converted_employee_id
+            )
+            .exclude(id=self.id)
+            .exists()
+        ):
+            raise ValidationError(_("Employee is uniques for candidate"))
+
         super().save(*args, **kwargs)
 
     class Meta:
@@ -496,6 +545,9 @@ class Candidate(HorillaModel):
             ("archive_candidate", "Archive Candidate"),
         )
         ordering = ["sequence"]
+
+
+from horilla.signals import pre_bulk_update
 
 
 class RejectReason(HorillaModel):
@@ -696,6 +748,9 @@ class RecruitmentMailTemplate(HorillaModel):
         verbose_name=_("Company"),
     )
 
+    def __str__(self) -> str:
+        return f"{self.title}"
+
 
 class SkillZone(HorillaModel):
     """ "
@@ -809,6 +864,9 @@ class InterviewSchedule(HorillaModel):
     employee_id = models.ManyToManyField(Employee, verbose_name=_("interviewer"))
     interview_date = models.DateField(verbose_name=_("Interview Date"))
     interview_time = models.TimeField(verbose_name=_("Interview Time"))
+    description = models.TextField(
+        verbose_name=_("Description"), blank=True, max_length=255
+    )
     completed = models.BooleanField(
         default=False, verbose_name=_("Is Interview Completed")
     )

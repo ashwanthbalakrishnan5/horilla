@@ -53,10 +53,11 @@
                   hx-get="{% url 'shift-request-search' %}?{{pd}}&sortby=requested_till"
                   hx-target="#view-container"
                 >{% trans "Requested Till" %}</div>
-                <div data-cell-index="6" data-cell-title='{% trans "Description" %}' class="oh-sticky-table__th">{% trans "Description" %}</div>
+                <div data-cell-index="6" data-cell-title='{% trans "Status" %}' class="oh-sticky-table__th">{% trans "Status" %}</div>
+                <div data-cell-index="7" data-cell-title='{% trans "Description" %}' class="oh-sticky-table__th">{% trans "Description" %}</div>
                 <div class="oh-sticky-table__th" style="width:115px;">{% trans "Comment" %}</div>
                 <div class="oh-sticky-table__th" style="width: 192px;">{% trans "Actions" %}</div>
-                {% if perms.base.change_shiftrequest and shift_request.approved == False or request.user|is_reportingmanager %}
+                {% if perms.base.change_shiftrequest or request.user|is_reportingmanager %}
                   <div class="oh-sticky-table__th oh-sticky-table__right " style="width:180px;">{% trans "Confirmation" %}</div>
                 {% endif %}
               </div>
@@ -97,7 +98,8 @@
                     <div class="oh-sticky-table__td" data-cell-index="3">{{shift_request.previous_shift_id}}</div>
                     <div class="oh-sticky-table__td dateformat_changer" data-cell-index="4">{{shift_request.requested_date}}</div>
                     <div class="oh-sticky-table__td dateformat_changer" data-cell-index="5">{{shift_request.requested_till}}</div>
-                    <div class="oh-sticky-table__td" data-cell-index="6">{{shift_request.description|truncatechars:17}}</div>
+                    <div class="oh-sticky-table__td" data-cell-index="6">{% if shift_request.approved %}{% trans "Approved" %}{% elif shift_request.canceled %}{% trans "Cancelled" %}{% else %}{% trans "Requested" %}{% endif %}</div>
+                    <div class="oh-sticky-table__td" data-cell-index="7">{{shift_request.description|truncatechars:30}}</div>
 
                     <div class="oh-sticky-table__td" onclick="event.stopPropagation();">
 
@@ -127,6 +129,11 @@
                         <ion-icon name="copy-outline"></ion-icon>
                         </a>
                         {% if shift_request.approved == False and shift_request.canceled == False %}
+                          <form action="{% url 'shift-request-delete' shift_request.id  %}" onsubmit="return confirm('{% trans "Are you sure you want to delete this shift request?" %}');" method='post' class="w-75">
+                            {% csrf_token %}
+                            <button type='submit' class="oh-btn oh-btn--danger-outline oh-btn--light-bkg w-100" title="{% trans 'Remove' %}"><ion-icon name="trash-outline"></ion-icon></button>
+                          </form>
+                        {% elif perms.base.change_shiftrequest or request.user|is_reportingmanager %}
                           <form action="{% url 'shift-request-delete' shift_request.id  %}" onsubmit="return confirm('{% trans "Are you sure you want to delete this shift request?" %}');" method='post' class="w-75">
                             {% csrf_token %}
                             <button type='submit' class="oh-btn oh-btn--danger-outline oh-btn--light-bkg w-100" title="{% trans 'Remove' %}"><ion-icon name="trash-outline"></ion-icon></button>
@@ -246,13 +253,13 @@
             <button class="oh-sticky-dropdown_btn " @click="open = !open"><ion-icon name="ellipsis-vertical-sharp"
               role="img" class="md hydrated" aria-label="ellipsis vertical sharp"></ion-icon></button>
             <div class="oh-dropdown__menu oh-sticky-table_dropdown" x-show="open" @click.outside="open = false">
-            <ul class="oh-dropdown__items" id="shiftRequestCells2">
+            <ul class="oh-dropdown__items" id="allocationRequestCells">
             </ul>
             </div>
           </div>
         </div>
       </div>
-      <div id="shift-allocation-request-table" data-table-name="shift_request_tab2">
+      <div id="shift-allocation-request-table" data-table-name="allocation_request_tab">
         <!-- start of sticky table -->
         <div class="oh-sticky-table">
           <div class="oh-sticky-table__table oh-table--sortable">
@@ -297,10 +304,10 @@
                 >{% trans "Requested Till" %}</div>
                 <div data-cell-index="16" data-cell-title='{% trans "Description" %}' class="oh-sticky-table__th">{% trans "Description" %}</div>
                 <div class="oh-sticky-table__th" style="width:115px;">{% trans "Comment" %}</div>
-                {% if perms.base.change_shiftrequest and shift_request.approved == False or request.user|is_reportingmanager %}
-                  <div class="oh-sticky-table__th">{% trans "Actions" %}</div>
+                <div class="oh-sticky-table__th">{% trans "Actions" %}</div>
+                {% if perms.base.change_shiftrequest or request.user|is_reportingmanager %}
+                  <div class="oh-sticky-table__th oh-sticky-table__right" style="width:180px;">{% trans "Confirmation" %}</div>
                 {% endif %}
-                <div class="oh-sticky-table__th oh-sticky-table__right" style="width:180px;">{% trans "Confirmation" %}</div>
               </div>
             </div>
             <div class="oh-sticky-table__tbody">
@@ -402,7 +409,7 @@
 
                       <div class="oh-btn-group" >
 
-                        {% if request.user.employee_get == shift_request.reallocate_to %}
+                        {% if request.user.employee_get == shift_request.reallocate_to and not request.user|is_reportingmanager %}
                           {% if shift_request.approved == True or shift_request.canceled == True or shift_request.reallocate_approved == True %}
                             <button class='oh-btn oh-btn--success w-100' disabled>
                               <ion-icon name="checkmark-outline"></ion-icon>
@@ -427,7 +434,7 @@
                           {% endif %}
                         {% endif %}
 
-                        {% if request.user.employee_get == shift_request.reallocate_to %}
+                        {% if request.user.employee_get == shift_request.reallocate_to and not request.user|is_reportingmanager %}
                           {% if shift_request.reallocate_canceled == True or shift_request.approved == True %}
                             <button class='oh-btn oh-btn--danger w-100' disabled>
                               <ion-icon name="close-circle-outline"></ion-icon>
@@ -717,10 +724,10 @@
   }
   $("[type=checkbox]").change();
 
-  toggleColumns("shift-allocation-request-table", "shiftRequestCells2");
-  localStorageShiftRequestCells = localStorage.getItem("shift_request_tab2");
+  toggleColumns("shift-allocation-request-table", "allocationRequestCells");
+  localStorageShiftRequestCells = localStorage.getItem("allocation_request_tab");
   if (!localStorageShiftRequestCells) {
-    $("#shiftRequestCells").find("[type=checkbox]").prop("checked", true);
+    $("#allocationRequestCells").find("[type=checkbox]").prop("checked", true);
   }
   $("[type=checkbox]").change();
 

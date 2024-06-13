@@ -11,6 +11,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from base import thread_local_middleware
 from base.horilla_company_manager import HorillaCompanyManager
 from base.thread_local_middleware import _thread_locals
 from horilla.models import HorillaModel
@@ -765,8 +766,10 @@ class WorkTypeRequest(HorillaModel):
         return False
 
     def clean(self):
-        if self.requested_date < django.utils.timezone.now().date():
-            raise ValidationError(_("Date must be greater than or equal to today"))
+        request = getattr(thread_local_middleware._thread_locals, "request", None)
+        if not request.user.is_superuser:
+            if self.requested_date < django.utils.timezone.now().date():
+                raise ValidationError(_("Date must be greater than or equal to today"))
         if self.requested_till and self.requested_till < self.requested_date:
             raise ValidationError(
                 _("End date must be greater than or equal to start date")
@@ -874,8 +877,11 @@ class ShiftRequest(HorillaModel):
         ]
 
     def clean(self):
-        if not self.pk and self.requested_date < django.utils.timezone.now().date():
-            raise ValidationError(_("Date must be greater than or equal to today"))
+
+        request = getattr(thread_local_middleware._thread_locals, "request", None)
+        if not request.user.is_superuser:
+            if not self.pk and self.requested_date < django.utils.timezone.now().date():
+                raise ValidationError(_("Date must be greater than or equal to today"))
         if self.requested_till and self.requested_till < self.requested_date:
             raise ValidationError(
                 _("End date must be greater than or equal to start date")
@@ -978,10 +984,6 @@ class DynamicEmailConfiguration(HorillaModel):
     SingletonModel to keep the mail server configurations
     """
 
-    is_primary = models.BooleanField(
-        default=False, verbose_name=_("Primary Mail Server")
-    )
-
     host = models.CharField(null=True, max_length=256, verbose_name=_("Email Host"))
 
     port = models.SmallIntegerField(null=True, verbose_name=_("Email Port"))
@@ -1013,6 +1015,10 @@ class DynamicEmailConfiguration(HorillaModel):
     use_ssl = models.BooleanField(default=False, verbose_name=_("Use SSL"))
 
     fail_silently = models.BooleanField(default=False, verbose_name=_("Fail Silently"))
+
+    is_primary = models.BooleanField(
+        default=False, verbose_name=_("Primary Mail Server")
+    )
 
     timeout = models.SmallIntegerField(
         null=True, verbose_name=_("Email Send Timeout (seconds)")
@@ -1270,8 +1276,8 @@ class Announcement(HorillaModel):
 
     from employee.models import Employee
 
-    title = models.CharField(max_length=30)
-    description = models.TextField(null=True, max_length=255)
+    title = models.CharField(max_length=100)
+    description = models.TextField(null=True)
     attachments = models.ManyToManyField(
         Attachment, related_name="announcement_attachments", blank=True
     )
@@ -1288,6 +1294,16 @@ class Announcement(HorillaModel):
         This method is used to get the view count of the announcement
         """
         return self.announcementview_set.filter(viewed=True)
+
+    def viewed_by(self):
+
+        viewed_by = AnnouncementView.objects.filter(
+            announcement_id__id=self.id, viewed=True
+        )
+        viewed_emp = []
+        for i in viewed_by:
+            viewed_emp.append(i.user)
+        return viewed_emp
 
     def __str__(self):
         return self.title
@@ -1328,6 +1344,7 @@ class EmailLog(models.Model):
     to = models.EmailField()
     status = models.CharField(max_length=6, choices=statuses)
     created_at = models.DateTimeField(auto_now_add=True)
+    objects = models.Manager()
     company_id = models.ForeignKey(
         Company, on_delete=models.CASCADE, null=True, editable=False
     )
@@ -1372,6 +1389,7 @@ class BiometricAttendance(models.Model):
         on_delete=models.PROTECT,
         related_name="biometric_enabled_company",
     )
+    objects = models.Manager()
 
     def __str__(self):
         return f"{self.is_installed}"

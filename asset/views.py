@@ -130,22 +130,25 @@ def add_asset_report(request, asset_id=None):
                 return redirect(asset_request_allocation_view)
 
     if request.method == "POST":
-        asset_report_form = AssetReportForm(request.POST, request.FILES)
+        asset_report_form = AssetReportForm(
+            request.POST, request.FILES, initial={"asset_id": asset_id}
+        )
+
         if asset_report_form.is_valid():
             asset_report = asset_report_form.save()
+            messages.success(request, _("Report added successfully."))
 
             if asset_report_form.is_valid() and request.FILES:
                 for file in request.FILES.getlist("file"):
                     AssetDocuments.objects.create(asset_report=asset_report, file=file)
 
                 return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+            # return HttpResponse("<script>window.location.reload()</script>")
 
     return render(
         request,
         "asset/asset_report_form.html",
-        {
-            "asset_report_form": asset_report_form,
-        },
+        {"asset_report_form": asset_report_form, "asset_id": asset_id},
     )
 
 
@@ -191,6 +194,7 @@ def asset_update(request, asset_id):
         "asset_form": asset_form,
         "asset_under": asset_under,
         "pg": previous_data,
+        "asset_cat_id": instance.asset_category_id.id,
     }
     requests_ids_json = request.GET.get("requests_ids")
     if requests_ids_json:
@@ -249,6 +253,7 @@ def asset_delete(request, asset_id):
     except Asset.DoesNotExist:
         messages.error(request, _("Asset not found"))
         return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+    asset_cat_id = asset.asset_category_id.id
     status = asset.asset_status
     asset_list_filter = request.GET.get("asset_list")
     asset_allocation = AssetAssignment.objects.filter(asset_id=asset).first()
@@ -286,16 +291,14 @@ def asset_delete(request, asset_id):
         if status == "In use":
             # if asset under the category
             messages.info(request, _("Asset is in use"))
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
 
         elif asset_allocation:
             # if this asset is used in any allocation
             messages.error(request, _("Asset is used in allocation!."))
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+        else:
+            asset_del(request, asset)
 
-        asset_del(request, asset)
-
-        return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+        return redirect(f"/asset/asset-list/{asset_cat_id}")
 
 
 @login_required
@@ -375,6 +378,8 @@ def asset_category_creation(request):
             asset_category_form.save()
             messages.success(request, _("Asset category created successfully"))
             asset_category_form = AssetCategoryForm()
+            if AssetCategory.objects.filter().count() == 1:
+                return HttpResponse("<script>window.location.reload();</script>")
     context = {"asset_category_form": asset_category_form}
     return render(request, "category/asset_category_creation.html", context)
 
@@ -407,40 +412,21 @@ def asset_category_update(request, cat_id):
     return render(request, "category/asset_category_update.html", context)
 
 
+@login_required
 @permission_required(perm="asset.delete_assetcategory")
-def asset_category_delete(request, cat_id):
+def delete_asset_category(request, cat_id):
     """
-    Deletes an asset category and redirects to the asset category view.
-    Args:
-        request (HttpRequest): The HTTP request object.
-        id (int): The ID of the asset category to be deleted.
-    Returns:
-        HttpResponseRedirect: A redirect to the asset category view.
-    Raises:
-        None.
+    This method is used to delete asset category
     """
+    previous_data = request.GET.urlencode()
     try:
-        asset_category = AssetCategory.objects.get(id=cat_id)
-    except AssetCategory.DoesNotExist:
-        messages.error(request, _("Asset not found"))
-        return redirect(asset_category_view_search_filter)
-    asset_status = Asset.objects.filter(asset_category_id=asset_category).filter(
-        asset_status="In use"
-    )
-
-    if asset_status:
-        messages.info(
-            request,
-            _("There are assets in use in the %(asset_category)s category.")
-            % {"asset_category": asset_category},
-        )
-        return redirect(asset_category_view_search_filter)
-    try:
-        asset_category.delete()
-        messages.success(request, _("Asset Category Deleted"))
-    except ProtectedError:
-        messages.error(request, _("You cannot delete this asset category."))
-    return redirect(asset_category_view_search_filter)
+        AssetCategory.objects.get(id=cat_id).delete()
+        messages.success(request, _("Asset category deleted."))
+    except:
+        messages.error(request, _("Assets are located within this category."))
+    if not AssetCategory.objects.filter():
+        return HttpResponse("<script>window.location.reload();</script>")
+    return redirect(f"/asset/asset-category-view-search-filter?{previous_data}")
 
 
 def filter_pagination_asset_category(request):
@@ -838,15 +824,15 @@ def filter_pagination_asset_request_allocation(request):
             [instance.id for instance in asset_allocation_filtered.object_list]
         )
 
-    assets_ids = paginator_qry(assets_filtered.qs, request.GET.get("page"))
+    assets_ids = paginator_qry(assets, request.GET.get("page"))
     assets_id = json.dumps([instance.id for instance in assets_ids.object_list])
     asset_paginator = Paginator(assets_filtered.qs, get_pagination())
-    asset_request_paginator = Paginator(asset_request_filtered, get_pagination())
-    asset_allocation_paginator = Paginator(asset_allocation_filtered, get_pagination())
+    # asset_request_paginator = Paginator(asset_request_filtered, get_pagination())
+    # asset_allocation_paginator = Paginator(asset_allocation_filtered, get_pagination())
     page_number = request.GET.get("page")
     assets = asset_paginator.get_page(page_number)
-    asset_requests = asset_request_paginator.get_page(page_number)
-    asset_allocations = asset_allocation_paginator.get_page(page_number)
+    # asset_requests = asset_request_paginator.get_page(page_number)
+    # asset_allocations = asset_allocation_paginator.get_page(page_number)
     # requests_ids = json.dumps([instance.id for instance in asset_requests.object_list])
     # allocations_ids = json.dumps(
     #     [instance.id for instance in asset_allocations.object_list]
@@ -858,8 +844,8 @@ def filter_pagination_asset_request_allocation(request):
     get_key_instances(Asset, data_dict)
     return {
         "assets": assets,
-        "asset_requests": asset_requests,
-        "asset_allocations": asset_allocations,
+        "asset_requests": asset_request_filtered,
+        "asset_allocations": asset_allocation_filtered,
         "assets_filter_form": assets_filtered.form,
         "asset_request_filter_form": AssetRequestFilter().form,
         "asset_allocation_filter_form": AssetAllocationFilter().form,
@@ -1005,7 +991,7 @@ def asset_import(request):
                     purchase_date = convert_nan(row["Purchase date"])
                     purchase_cost = convert_nan(row["Purchase cost"])
                     category_name = convert_nan(row["Category"])
-                    lot_number = convert_nan(row["lot number"])
+                    lot_number = convert_nan(row["Batch number"])
                     status = convert_nan(row["Status"])
 
                     asset_category, create = AssetCategory.objects.get_or_create(
@@ -1047,7 +1033,7 @@ def asset_excel(_request):
             "Purchase cost",
             "Category",
             "Status",
-            "lot number",
+            "Batch number",
         ]
         # Create a pandas DataFrame with columns but no data
         dataframe = pd.DataFrame(columns=columns)
@@ -1195,6 +1181,8 @@ def asset_batch_number_creation(request):
             asset_batch_form.save()
             asset_batch_form = AssetBatchForm()
             messages.success(request, _("Batch number created successfully."))
+            if AssetLot.objects.filter().count() == 1 and not hx_vals:
+                return HttpResponse("<script>location.reload();</script>")
             if hx_vals:
                 category_id = request.GET.get("asset_category_id")
                 url = reverse("asset-creation", args=[category_id])
@@ -1298,6 +1286,8 @@ def asset_batch_number_delete(request, batch_id):
         messages.error(request, _("Batch number not found"))
     except ProtectedError:
         messages.error(request, _("You cannot delete this Batch number."))
+    if not AssetLot.objects.filter():
+        return HttpResponse("<script>location.reload();</script>")
     return redirect(f"/asset/asset-batch-number-search?{previous_data}")
 
 
@@ -1349,21 +1339,6 @@ def asset_count_update(request):
             asset_count = category.asset_set.count()
             return HttpResponse(asset_count)
         return HttpResponse("error")
-
-
-@login_required
-@permission_required(perm="asset.delete_assetcategory")
-def delete_asset_category(request, cat_id):
-    """
-    This method is used to delete asset category
-    """
-    previous_data = request.GET.urlencode()
-    try:
-        AssetCategory.objects.get(id=cat_id).delete()
-        messages.success(request, _("Asset category deleted."))
-    except:
-        messages.error(request, _("Assets are located within this category."))
-    return redirect(f"/asset/asset-category-view-search-filter?{previous_data}")
 
 
 @login_required

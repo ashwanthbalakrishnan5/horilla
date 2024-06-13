@@ -17,7 +17,6 @@ import json
 import operator
 import os
 import re
-from collections import defaultdict
 from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs
 
@@ -25,10 +24,9 @@ import pandas as pd
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.models import User
-from django.core.paginator import Paginator
 from django.db import models
-from django.db.models import F, ProtectedError, Q
-from django.forms import CharField, ChoiceField, DateInput, Select
+from django.db.models import F, ProtectedError
+from django.forms import DateInput, Select
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, QueryDict
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -41,8 +39,6 @@ from attendance.methods.group_by import group_by_queryset
 from attendance.models import Attendance, AttendanceOverTime
 from base.forms import ModelForm
 from base.methods import (
-    check_manager,
-    check_owner,
     choosesubordinates,
     filtersubordinates,
     filtersubordinatesemployeemodel,
@@ -106,7 +102,7 @@ from horilla_documents.forms import (
     DocumentUpdateForm,
 )
 from horilla_documents.models import Document, DocumentRequest
-from leave.models import LeaveRequest
+from leave.models import LeaveGeneralSetting, LeaveRequest
 from notifications.signals import notify
 from onboarding.models import OnboardingStage, OnboardingTask
 from payroll.methods.payslip_calc import dynamic_attr
@@ -163,6 +159,12 @@ filter_mapping = {
 # Create your views here.
 @login_required
 def get_language_code(request):
+    """
+    Retrieve the language code for the current request.
+
+    This view function extracts the LANGUAGE_CODE from the request object and
+    returns it as a JSON response. This function requires the user to be logged in.
+    """
     language_code = request.LANGUAGE_CODE
     return JsonResponse({"language_code": language_code})
 
@@ -174,7 +176,14 @@ def employee_profile(request):
     """
     user = request.user
     employee = request.user.employee_get
-    user_leaves = employee.available_leave.all()
+    user_leaves = employee.available_leave.all().exclude(
+        leave_type_id__is_compensatory_leave=True
+    )
+    if (
+        LeaveGeneralSetting.objects.first()
+        and LeaveGeneralSetting.objects.first().compensatory_leave
+    ):
+        user_leaves = employee.available_leave.all()
     instances = LeaveRequest.objects.filter(employee_id=employee)
     leave_request_ids = json.dumps([instance.id for instance in instances])
     employee = Employee.objects.filter(employee_user_id=user).first()
@@ -252,8 +261,48 @@ def employee_view_individual(request, obj_id, **kwargs):
         AccountBlockUnblock.objects.exists()
         and AccountBlockUnblock.objects.first().is_enabled
     )
+    # Retrieve the filtered employees from the session
+    filtered_employee_ids = request.session.get("filtered_employees", [])
+    filtered_employees = Employee.objects.filter(id__in=filtered_employee_ids)
+
+    request_ids_str = json.dumps(
+        [
+            instance.id
+            for instance in paginator_qry(
+                filtered_employees, request.GET.get("page")
+            ).object_list
+        ]
+    )
+
+    # Convert the string to an actual list of integers
+    requests_ids = (
+        ast.literal_eval(request_ids_str)
+        if isinstance(request_ids_str, str)
+        else request_ids_str
+    )
+
+    employee_id = employee.id
+    previous_id = None
+    next_id = None
+
+    for index, req_id in enumerate(requests_ids):
+        if req_id == employee_id:
+
+            if index == len(requests_ids) - 1:
+                next_id = None
+            else:
+                next_id = requests_ids[index + 1]
+            if index == 0:
+                previous_id = None
+            else:
+                previous_id = requests_ids[index - 1]
+            break
+
     context = {
         "employee": employee,
+        "previous": previous_id,
+        "next": next_id,
+        "requests_ids": requests_ids,
         "current_date": date.today(),
         "leave_request_ids": leave_request_ids,
         "enabled_block_unblock": enabled_block_unblock,
@@ -278,7 +327,6 @@ def contract_tab(request, obj_id, **kwargs):
     """
     employee = Employee.objects.get(id=obj_id)
     employee_leaves = employee.available_leave.all()
-    user = Employee.objects.filter(employee_user_id=request.user).first()
     contracts = Contract.objects.filter(employee_id=obj_id)
     return render(
         request,
@@ -362,7 +410,8 @@ def asset_request_tab(request, emp_id):
 @owner_can_enter("pms.view_feedback", Employee)
 def performance_tab(request, emp_id):
     """
-    This function is used to view performance tab of an employee in employee individual & profile view.
+    This function is used to view performance tab of an employee in employee individual
+    & profile view.
 
     Parameters:
     request (HttpRequest): The HTTP request object.
@@ -442,6 +491,15 @@ def attendance_tab(request, emp_id):
 
 
 def allowances_deductions_tab(request, emp_id):
+    """
+    Retrieve and render the allowances and deductions applicable to an employee.
+
+    This view function retrieves the active contract, basic pay, allowances, and
+    deductions for a specified employee. It filters allowances and deductions
+    based on various conditions, including specific employee assignments and
+    condition-based rules. The results are then rendered in the allowance and
+    deduction tab template.
+    """
     employee = Employee.objects.get(id=emp_id)
     active_contracts = employee.contract_set.filter(contract_status="active").first()
     basic_pay = active_contracts.wage if active_contracts else None
@@ -579,7 +637,7 @@ def document_request_view(request):
     Returns: return document_request template
     """
     previous_data = request.GET.urlencode()
-    f = DocumentRequestFilter()
+    filter_class = DocumentRequestFilter()
     document_requests = DocumentRequest.objects.all()
     documents = Document.objects.filter(document_request_id__isnull=False)
     documents = filtersubordinates(
@@ -596,7 +654,7 @@ def document_request_view(request):
     context = {
         "document_requests": document_requests,
         "documents": documents,
-        "f": f,
+        "f": filter_class,
         "pd": previous_data,
         "filter_dict": data_dict,
     }
@@ -604,6 +662,7 @@ def document_request_view(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("horilla_documents.view_documentrequests")
 def document_filter_view(request):
     """
@@ -636,6 +695,7 @@ def document_filter_view(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("horilla_documents.add_documentrequests")
 def document_request_create(request):
     """
@@ -679,6 +739,7 @@ def document_request_create(request):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("horilla_documents.change_documentrequests")
 def document_request_update(request, id):
     """
@@ -709,10 +770,12 @@ def document_request_update(request, id):
 
 
 @login_required
+@hx_request_required
 @owner_can_enter("horilla_documents.view_document", Employee)
 def document_tab(request, emp_id):
     """
-    This function is used to view documents tab of an employee in employee individual & profile view.
+    This function is used to view documents tab of an employee in employee individual
+    & profile view.
 
     Parameters:
     request (HttpRequest): The HTTP request object.
@@ -733,6 +796,7 @@ def document_tab(request, emp_id):
 
 
 @login_required
+@hx_request_required
 @owner_can_enter("horilla_documents.add_document", Employee)
 def document_create(request, emp_id):
     """
@@ -786,9 +850,22 @@ def update_document_title(request, id):
 
 
 @login_required
+@hx_request_required
 def document_delete(request, id):
+    """
+    Handle the deletion of a document, with permissions and error handling.
+
+    This view function attempts to delete a document specified by its ID.
+    If the user does not have the "delete_document" permission, it restricts
+    deletion to documents owned by the user. It provides appropriate success
+    or error messages based on the outcome. If the document is protected and
+    cannot be deleted, it handles the exception and informs the user.
+    """
     try:
-        document = Document.objects.filter(id=id).first()
+        document = Document.objects.filter(id=id)
+        # users can delete own documents
+        if not request.user.has_perm("horilla_documents.delete_document"):
+            document = document.filter(employee_id__employee_user_id=request.user)
         if document:
             document.delete()
             messages.success(
@@ -810,6 +887,7 @@ def document_delete(request, id):
 
 
 @login_required
+@hx_request_required
 def file_upload(request, id):
     """
     This function is used to upload documents of an employee in employee individual & profile view.
@@ -848,6 +926,7 @@ def file_upload(request, id):
 
 
 @login_required
+@hx_request_required
 def view_file(request, id):
     """
     This function used to view the uploaded document in the modal.
@@ -907,6 +986,7 @@ def get_content_type(file_extension):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("horilla_documents.add_document")
 def document_approve(request, id):
     """
@@ -931,6 +1011,7 @@ def document_approve(request, id):
 
 
 @login_required
+@hx_request_required
 @manager_can_enter("horilla_documents.add_document")
 def document_reject(request, id):
     """
@@ -1068,6 +1149,7 @@ def employee_view(request):
     view_type = request.GET.get("view")
     previous_data = request.GET.urlencode()
     page_number = request.GET.get("page")
+    error_message = request.session.pop("error_message", None)
     queryset = (
         Employee.objects.filter(is_active=True)
         if isinstance(request.GET, QueryDict) and not request.GET
@@ -1079,7 +1161,11 @@ def employee_view(request):
     update_fields = BulkUpdateFieldForm()
     data_dict = parse_qs(previous_data)
     get_key_instances(Employee, data_dict)
-    emp = Employee.objects.all()
+    emp = Employee.objects.filter()
+
+    # Store the employees in the session
+    request.session["filtered_employees"] = [employee.id for employee in queryset]
+
     return render(
         request,
         "employee_personal_info/employee_view.html",
@@ -1094,6 +1180,7 @@ def employee_view(request):
             "filter_dict": data_dict,
             "emp": emp,
             "gp_fields": EmployeeReGroup.fields,
+            "error_message": error_message,
         },
     )
 
@@ -1389,15 +1476,23 @@ def employee_account_block_unblock(request, emp_id):
     if not user:
         messages.info(request, _("Employee not found"))
         return redirect(employee_view)
-    user.is_active = not user.is_active
-    action_message = _("blocked") if not user.is_active else _("unblocked")
-    user.save()
-    messages.success(
-        request,
-        _("{employee}'s account {action_message} successfully!").format(
-            employee=employee, action_message=action_message
-        ),
-    )
+    if not user.is_superuser:
+        user.is_active = not user.is_active
+        action_message = _("blocked") if not user.is_active else _("unblocked")
+        user.save()
+        messages.success(
+            request,
+            _("{employee}'s account {action_message} successfully!").format(
+                employee=employee, action_message=action_message
+            ),
+        )
+    else:
+        messages.info(
+            request,
+            _("{employee} is a superuser and cannot be blocked.").format(
+                employee=employee
+            ),
+        )
     return redirect(employee_view_individual, obj_id=emp_id)
 
 
@@ -1759,6 +1854,10 @@ def employee_filter_view(request):
     else:
         employees = sortby(request, employees, "orderby")
         employees = paginator_qry(employees, page_number)
+
+        # Store the employees in the session
+        request.session["filtered_employees"] = [employee.id for employee in employees]
+
     return render(
         request,
         template,
@@ -1895,12 +1994,16 @@ def employee_delete(request, obj_id):
     try:
         view = request.POST.get("view")
         employee = Employee.objects.get(id=obj_id)
-        if Contract.objects.get(employee_id=obj_id) is not None:
-            contract = Contract.objects.get(employee_id=obj_id)
-            if contract.contract_status != 'active':
-                contract.delete()
+        if Contract.objects.filter(employee_id=obj_id).exists():
+            contracts = Contract.objects.filter(employee_id=obj_id)
+            for contract in contracts:
+                if contract.contract_status != "active":
+                    contract.delete()
         user = employee.employee_user_id
-        user.delete()
+        try:
+            user.delete()
+        except AttributeError:
+            employee.delete()
         messages.success(request, _("Employee deleted"))
 
     except Employee.DoesNotExist:
@@ -1909,10 +2012,11 @@ def employee_delete(request, obj_id):
         model_verbose_names_set = set()
         for obj in e.protected_objects:
             model_verbose_names_set.add(__(obj._meta.verbose_name.capitalize()))
-        model_names_str = ", ".join(model_verbose_names_set)
-        messages.error(
-            request, _("This employee already related in {}.".format(model_names_str))
-        )
+        model_names_str = ", - ".join(model_verbose_names_set)
+        error_message = _("- {}.".format(model_names_str))
+        error_message = str(error_message)
+        request.session["error_message"] = error_message
+        return redirect(employee_view)
     return HttpResponseRedirect(request.META.get("HTTP_REFERER", f"/view={view}"))
 
 
@@ -2681,7 +2785,9 @@ def work_info_import(request):
                     employee_work_info.shift_id = shift_obj
                     employee_work_info.location = location
                     employee_work_info.date_joining = (
-                        date_joining if not pd.isnull(date_joining) else datetime.today()
+                        date_joining
+                        if not pd.isnull(date_joining)
+                        else datetime.today()
                     )
                     employee_work_info.contract_end_date = (
                         contract_end_date if not pd.isnull(contract_end_date) else None
@@ -2885,8 +2991,14 @@ def get_employees_birthday(_):
                 "name": name,
                 "dob": dob,
                 "daysUntilBirthday": days_till_birthday,
-                "department": emp.get_department().department,
-                "job_position": emp.get_job_position().job_position,
+                "department": (
+                    emp.get_department().department if emp.get_department() else ""
+                ),
+                "job_position": (
+                    emp.get_job_position().job_position
+                    if emp.get_job_position()
+                    else ""
+                ),
             }
         )
     return JsonResponse({"birthdays": birthdays})
@@ -3108,7 +3220,8 @@ def employee_select_filter(request):
 @manager_can_enter(perm="employee.view_employeenote")
 def note_tab(request, emp_id):
     """
-    This function is used to view performance tab of an employee in employee individual & profile view.
+    This function is used to view note tab of an employee in employee individual
+    & profile view.
 
     Parameters:
     request (HttpRequest): The HTTP request object.
@@ -3208,23 +3321,24 @@ def employee_note_delete(request, note_id):
     """
 
     note = EmployeeNote.objects.get(id=note_id)
-    employee_id = note.employee_id.id
     note.delete()
     message = _("Note deleted successfully...")
     return HttpResponse(
-        f"<div class='oh-wrapper'> <div class='oh-alert-container'> <div class='oh-alert oh-alert--animated oh-alert--success'>{message}</div></div></div>"
+        f"<div class='oh-wrapper'> <div class='oh-alert-container'>\
+            <div class='oh-alert oh-alert--animated oh-alert--success'>\
+                {message}</div></div></div>"
     )
 
 
 @login_required
 @hx_request_required
-def add_more_employee_files(request, id):
+def add_more_employee_files(request, note_id):
     """
     This method is used to Add more files to the Employee note.
     Args:
         id : stage note instance id
     """
-    note = EmployeeNote.objects.get(id=id)
+    note = EmployeeNote.objects.get(id=note_id)
     employee_id = note.employee_id.id
     if request.method == "POST":
         files = request.FILES.getlist("files")
@@ -3238,14 +3352,17 @@ def add_more_employee_files(request, id):
 
 
 @login_required
-def delete_employee_note_file(request, id):
+def delete_employee_note_file(request, note_file_id):
     """
     This method is used to delete the stage note file
     Args:
         id : stage file instance id
     """
-    file = NoteFiles.objects.get(id=id)
-    employee_id = file.employeenote_set.all().first().employee_id.id
+    file = NoteFiles.objects.get(id=note_file_id)
+    notes = file.employeenote_set.all()
+    if not request.user.has_perm("employee.delete_notefile"):
+        file.employeenote_set.filter(employee_id__employee_user_id=request.user)
+    employee_id = notes.first().employee_id.id
     file.delete()
     return redirect(f"/employee/note-tab/{employee_id}")
 
@@ -3254,7 +3371,8 @@ def delete_employee_note_file(request, id):
 @owner_can_enter("employee.view_bonuspoint", Employee)
 def bonus_points_tab(request, emp_id):
     """
-    This function is used to view Bonus Points tab of an employee in employee individual & profile view.
+    This function is used to view Bonus Points tab of an employee in employee individual
+    & profile view.
 
     Parameters:
     request (HttpRequest): The HTTP request object.
@@ -3377,8 +3495,7 @@ def redeem_points(request, emp_id):
             form.save(commit=False)
             points = form.cleaned_data["points"]
             amount = amount_for_bonus_point * points
-
-            reimbursement = Reimbursement.objects.create(
+            Reimbursement.objects.create(
                 title=f"Bonus point Redeem for {user}",
                 type="bonus_encashment",
                 employee_id=user,
@@ -3387,7 +3504,7 @@ def redeem_points(request, emp_id):
                 description=f"{user} want to redeem {points} points",
                 allowance_on=date.today(),
             )
-            return HttpResponseRedirect(request.META.get("HTTP_REFERER", "/"))
+            return HttpResponse("<script>window.location.reload();</script>")
     return render(
         request,
         "tabs/forms/redeem_points_form.html",
@@ -3399,7 +3516,6 @@ def redeem_points(request, emp_id):
 
 
 @login_required
-# @manager_can_enter(perm="employee.view_employee")
 def organisation_chart(request):
     """
     This method is used to view oganisation chart
@@ -3431,7 +3547,8 @@ def organisation_chart(request):
         for employee in subordinates:
             if employee in entered_req_managers:
                 continue
-            # check the employee is a reporting manager if yes,remove className store it into entered_req_managers
+            # check the employee is a reporting manager if yes,remove className store
+            # it into entered_req_managers
             if employee.id in result_dict.keys():
                 nodes.append(
                     {
@@ -3487,6 +3604,16 @@ def organisation_chart(request):
 
 @login_required
 def encashment_condition_create(request):
+    """
+    Handle the creation and updating of encashment general settings.
+
+    This view function retrieves the first instance of EncashmentGeneralSettings
+    and initializes a form with it. If the request method is POST, it attempts
+    to update the instance with the submitted data. If the form is valid, the
+    settings are saved and a success message is displayed. The user is then
+    redirected to the referring page or the root URL. If the request method is
+    GET, it renders the encashment settings form.
+    """
     from payroll.forms.forms import EncashmentGeneralSettingsForm
 
     instance = EncashmentGeneralSettings.objects.first()
@@ -3544,13 +3671,24 @@ def employee_get_mail_log(request):
     """
     employee_id = request.GET["emp_id"]
     employee = Employee.objects.get(id=employee_id)
-    tracked_mails = EmailLog.objects.filter(to__icontains=employee.email).order_by(
-        "-created_at"
-    )
+    tracked_mails = EmailLog.objects.filter(to__icontains=employee.email)
+    if employee.employee_work_info and employee.employee_work_info.email:
+        tracked_mails = tracked_mails | EmailLog.objects.filter(
+            to__icontains=employee.employee_work_info.email
+        )
+    tracked_mails = tracked_mails.order_by("-created_at")
+
     return render(request, "tabs/mail_log.html", {"tracked_mails": tracked_mails})
 
 
 def get_job_roles(request):
+    """
+    Retrieve job roles associated with a specific job position.
+
+    This view function extracts the job_id from the GET request, queries the
+    JobRole model for job roles that match the provided job_position_id, and
+    returns the results as a JSON response.
+    """
     job_id = request.GET.get("job_id")
     job_roles = JobRole.objects.filter(job_position_id=job_id).values_list(
         "id", "job_role"

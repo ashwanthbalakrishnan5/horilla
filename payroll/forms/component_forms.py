@@ -17,6 +17,7 @@ from base.forms import Form, ModelForm
 from base.methods import reload_queryset
 from employee.filters import EmployeeFilter
 from employee.models import BonusPoint, Employee
+from horilla.decorators import logger
 from horilla_widgets.forms import HorillaForm
 from horilla_widgets.widgets.horilla_multi_select_field import HorillaMultiSelectField
 from horilla_widgets.widgets.select_widgets import HorillaMultiSelectWidget
@@ -98,7 +99,7 @@ class AllowanceForm(forms.ModelForm):
                     condition.save()
                     multiple_conditions.append(condition)
         except Exception as e:
-            print(e)
+            logger(e)
         if commit:
             self.instance.other_conditions.add(*multiple_conditions)
         return multiple_conditions
@@ -226,8 +227,16 @@ class PayslipForm(ModelForm):
         ]
         exclude = ["is_active"]
         widgets = {
-            "start_date": forms.DateInput(attrs={"type": "date"}),
-            "end_date": forms.DateInput(attrs={"type": "date"}),
+            "start_date": forms.DateInput(
+                attrs={
+                    "type": "date",
+                }
+            ),
+            "end_date": forms.DateInput(
+                attrs={
+                    "type": "date",
+                }
+            ),
         }
 
 
@@ -647,12 +656,13 @@ class ReimbursementForm(ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
+        request = getattr(thread_local_middleware._thread_locals, "request", None)
         if self.instance.pk:
             employee_id = self.instance.employee_id
             type = self.instance.type
 
         else:
-            employee_id = cleaned_data["employee_id"]
+            employee_id = request.user.employee_get
             type = cleaned_data["type"]
 
         available_points = BonusPoint.objects.filter(employee_id=employee_id).first()

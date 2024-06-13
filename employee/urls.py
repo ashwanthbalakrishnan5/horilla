@@ -209,12 +209,12 @@ urlpatterns = [
         name="employee-note-update",
     ),
     path(
-        "add-more-files-employee/<int:id>/",
+        "add-more-files-employee/<int:note_id>/",
         views.add_more_employee_files,
         name="add-more-files-employee",
     ),
     path(
-        "delete-employee-note-file/<int:id>/",
+        "delete-employee-note-file/<int:note_file_id>/",
         views.delete_employee_note_file,
         name="delete-employee-note-file",
     ),
@@ -256,6 +256,9 @@ urlpatterns = [
         "send-mail/<int:emp_id>/",
         not_in_out_dashboard.send_mail,
         name="send-mail-employee",
+    ),
+    path(
+        "employee-bulk-mail", not_in_out_dashboard.send_mail, name="employee-bulk-mail"
     ),
     path(
         "send-mail",

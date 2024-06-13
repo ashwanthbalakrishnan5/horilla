@@ -28,7 +28,7 @@ from attendance.views.views import (
 from base.context_processors import timerunner_enabled
 from base.models import EmployeeShiftDay
 from base.thread_local_middleware import _thread_locals
-from horilla.decorators import login_required
+from horilla.decorators import hx_request_required, login_required
 
 
 def late_come_create(attendance):
@@ -179,6 +179,7 @@ def clock_in_attendance_and_activity(
 
 
 @login_required
+@hx_request_required
 def clock_in(request):
     """
     This method is used to mark the attendance once per a day and multiple attendance activities.
@@ -294,7 +295,7 @@ def clock_out_attendance_and_activity(employee, date_today, now, out_datetime=No
     """
 
     attendance_activities = AttendanceActivity.objects.filter(
-        employee_id=employee
+        employee_id=employee, clock_out__isnull=True
     ).order_by("attendance_date", "id")
     if attendance_activities.exists():
         attendance_activity = attendance_activities.last()
@@ -323,7 +324,6 @@ def clock_out_attendance_and_activity(employee, date_today, now, out_datetime=No
     attendance.attendance_clock_out = now + ":00"
     attendance.attendance_clock_out_date = date_today
     attendance.attendance_worked_hour = duration
-    attendance.save()
     # Overtime calculation
     attendance.attendance_overtime = overtime_calculation(attendance)
 
@@ -381,6 +381,7 @@ def early_out(attendance, start_time, end_time):
 
 
 @login_required
+@hx_request_required
 def clock_out(request):
     """
     This method is used to set the out date and time for attendance and attendance activity

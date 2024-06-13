@@ -3,7 +3,9 @@ from urllib.parse import urlparse
 from django.shortcuts import redirect
 from django.urls import Resolver404, path, resolve, reverse
 
+from employee.models import Employee
 from horilla.urls import urlpatterns
+from recruitment.models import Candidate
 
 
 def _split_path(self, path=None):
@@ -106,6 +108,16 @@ sidebar_urls = [
     "action-type",
     "general-settings",
     "view-biometric-devices",
+    "employee-tag-view",
+    "grace-settings-view",
+    "helpdesk-tag-view",
+    "restrict-view",
+    "asset-history",
+    "view-key-result",
+    "view-meetings",
+    "interview-view",
+    "view-compensatory-leave",
+    "compensatory-leave-settings-view",
 ]
 remove_urls = [
     "feedback-detailed-view",
@@ -130,13 +142,50 @@ def breadcrumbs(request):
 
         parts = _split_path(request)
         path = base_url
+
+        candidates = Candidate.objects.filter(is_active=True)
+        employees = Employee.objects.all()
+
+        if len(parts) > 1:
+
+            if "recruitment" in parts:
+                if "search-candidate" in parts:
+                    pass
+                elif "candidate-view" in parts:
+                    pass
+                elif "get-mail-log-rec" in parts:
+                    pass
+                else:
+                    # Store the candidates in the session
+                    request.session["filtered_candidates"] = [
+                        candidate.id for candidate in candidates
+                    ]
+
+            if "employee-filter-view" in parts:
+                pass
+            elif "employee-view" in parts:
+                pass
+            elif "view-penalties" in parts:
+                pass
+            elif parts[0] == "employee" and parts[-1].isdigit():
+                pass
+            else:
+                # Store the employees in the session
+                request.session["filtered_employees"] = [
+                    employee.id for employee in employees
+                ]
+
         if len(parts) == 0:
             user_breadcrumbs[user_id].clear()
             user_breadcrumb.append({"url": base_url, "name": "Horilla", "found": True})
 
         if len(parts) > 1:
             last_path = parts[-1]
-            if last_path in sidebar_urls:
+            if (
+                last_path in sidebar_urls
+                or parts[-2] == "employee-view"
+                or parts[-2] == "candidate-view"
+            ):
                 breadcrumbs = user_breadcrumbs[user_id]
                 first_path = breadcrumbs[0]
                 user_breadcrumbs[user_id].clear()

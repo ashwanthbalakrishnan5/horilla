@@ -1,4 +1,5 @@
 from django.contrib.auth.models import Group
+from django.contrib.auth.views import PasswordResetConfirmView
 from django.urls import path
 
 from base import announcement, request_and_approve, views
@@ -32,8 +33,12 @@ from horilla_audit.models import AuditTag
 urlpatterns = [
     path("", views.home, name="home-page"),
     path("login/", views.login_user, name="login"),
-    path("forgot-password", views.forgot_password, name="forgot-password"),
-    path("reset-password/<uuid>/", views.reset_password, name="reset-password"),
+    path(
+        "forgot-password",
+        views.HorillaPasswordResetView.as_view(),
+        name="forgot-password",
+    ),
+    path("reset-send-success", views.reset_send_success, name="reset-send-success"),
     path("change-password", views.change_password, name="change-password"),
     path("logout", views.logout_user, name="logout"),
     path("settings", views.common_settings, name="settings"),
@@ -745,6 +750,26 @@ urlpatterns = [
         name="multiple-approval-condition",
     ),
     path(
+        "configuration/condition-value-fields",
+        views.get_condition_value_fields,
+        name="condition-value-fields",
+    ),
+    path(
+        "configuration/add-more-approval-managers",
+        views.add_more_approval_managers,
+        name="add-more-approval-managers",
+    ),
+    path(
+        "configuration/remove-approval-manager",
+        views.remove_approval_manager,
+        name="remove-approval-manager",
+    ),
+    path(
+        "configuration/hx-multiple-approval-condition",
+        views.hx_multiple_approval_condition,
+        name="hx-multiple-approval-condition",
+    ),
+    path(
         "multiple-level-approval-create",
         views.multiple_level_approval_create,
         name="multiple-level-approval-create",
@@ -891,6 +916,11 @@ urlpatterns = [
         "announcement-single-view/<int:anoun_id>",
         announcement.announcement_single_view,
         name="announcement-single-view",
+    ),
+    path(
+        "announcement-delete-comment/<int:comment_id>/",
+        announcement.delete_announcement_comment,
+        name="announcement-delete-comment",
     ),
     path(
         "announcement-viewed-by", announcement.viewed_by, name="announcement-viewed-by"

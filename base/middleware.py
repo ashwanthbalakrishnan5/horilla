@@ -4,6 +4,8 @@ middleware.py
 
 from django.apps import apps
 from django.db.models import Q
+from django.http import HttpResponse, HttpResponseNotAllowed
+from django.shortcuts import render
 
 from base.context_processors import AllCompany
 from base.horilla_company_manager import HorillaCompanyManager
@@ -99,4 +101,15 @@ class CompanyMiddleware:
                         )
 
         response = self.get_response(request)
+        return response
+
+
+class MethodNotAllowedMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if isinstance(response, HttpResponseNotAllowed):
+            return render(request, "405.html")
         return response
