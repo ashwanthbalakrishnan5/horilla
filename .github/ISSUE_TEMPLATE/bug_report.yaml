@@ -1,0 +1,82 @@
+name: Bug report
+description: Create a report to help us improve
+title: '🐞 [BUG] '
+
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug Report
+
+        Please provide as much detail as possible to help us understand and resolve the issue.
+
+  - type: input
+    id: description
+    attributes:
+      label: Description
+      description: A brief description of the bug or issue.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed step-by-step instructions to reproduce the issue.
+      placeholder: 1. Step one\n2. Step two
+    validations:
+      required: false
+
+  - type: input
+    id: expected_behavior
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+      placeholder: Describe the expected behavior...
+    validations:
+      required: true
+
+  - type: input
+    id: actual_behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened.
+      placeholder: Describe what actually happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide details about your environment.
+      placeholder: |
+        - Django Version: 3.2.1
+        - Python Version: 3.9
+        - Operating System: Ubuntu 20.04
+        - Browser: Chrome 95
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Additional Information
+      description: Any other relevant information, logs, error messages, or context.
+      placeholder: Provide additional details (optional).
+
+  - type: input
+    id: possible_solution
+    attributes:
+      label: Possible Solution
+      description: Suggest ideas or solutions (optional).
+      placeholder: Provide any potential solutions...
+
+  - type: input
+    id: labels
+    attributes:
+      label: Labels
+      description: Suggest labels for this issue (optional).
+      placeholder: e.g., bug, needs investigation

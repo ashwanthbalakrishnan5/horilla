@@ -1,0 +1,64 @@
+name: Feature request
+description: Suggest an idea for this project
+title: '💡 [FEATURE] '
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Feature Request
+      
+        Please provide clear and concise details about the feature you’re suggesting.
+
+  - type: input
+    id: description
+    attributes:
+      label: Description
+      description: A brief description of the new feature.
+      placeholder: Describe the feature...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Explain how this feature would be useful and fit into the project context.
+      placeholder: Describe the use case...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: Provide your ideas or suggestions on how this feature could be implemented (optional).
+      placeholder: Suggest a solution or implementation...
+
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: Highlight the benefits and value this feature would bring to users or the project.
+      placeholder: Describe the benefits...
+
+  - type: textarea
+    id: additional_info
+    attributes:
+      label: Additional Information
+      description: Any other relevant details or examples related to the feature request.
+      placeholder: Provide additional details (optional).
+
+  - type: input
+    id: labels
+    attributes:
+      label: Labels
+      description: Suggest labels for this feature request (optional).
+      placeholder: e.g., enhancement, feature request
+
+  - type: input
+    id: priority
+    attributes:
+      label: Priority
+      description: Specify the priority level for this feature request.
+      placeholder: e.g., high, medium, low
